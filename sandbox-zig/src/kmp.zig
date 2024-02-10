@@ -82,3 +82,8 @@ extern "C" fn __kmpc_global_thread_num() c_int;
 pub fn get_tid() c_int {
     return __kmpc_global_thread_num();
 }
+
+extern "C" fn __kmpc_push_num_threads(loc: *ident_t, global_tid: c_int, num_threads: c_int) void;
+pub fn push_num_threads(name: *ident_t, global_tid: c_int, num_threads: c_int) void {
+    __kmpc_push_num_threads(name, global_tid, num_threads);
+}

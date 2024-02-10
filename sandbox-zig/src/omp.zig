@@ -6,6 +6,22 @@ const omp = @cImport({
 
 const kmp = @import("kmp.zig");
 
+pub const parallel_opts = struct {
+    num_threads: c_int = -1,
+};
+
+pub fn parallel(f: anytype, args: anytype, opts: parallel_opts) void {
+    var id = .{
+        .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
+        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+    };
+    if (opts.num_threads != -1) {
+        kmp.push_num_threads(&id, kmp.get_tid(), opts.num_threads);
+    }
+
+    kmp.fork_call(&id, 1, @ptrCast(&omp_ctx.make_outline(@TypeOf(args), f).outline), &args);
+}
+
 const omp_ctx = struct {
     const Self = @This();
 
@@ -23,15 +39,6 @@ const omp_ctx = struct {
                 f(&this, argss);
             }
         };
-    }
-
-    pub fn parallel(f: anytype, args: anytype) void {
-        var id = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
-            .psource = "parallel" ++ @typeName(@TypeOf(f)),
-        };
-
-        kmp.fork_call(&id, 1, @ptrCast(&omp_ctx.make_outline(@TypeOf(args), f).outline), &args);
     }
 
     pub fn single(this: *Self, f: anytype, args: anytype) void {
@@ -66,13 +73,14 @@ const omp_ctx = struct {
 };
 
 pub fn main() !void {
-    omp_ctx.parallel(tes, .{ .string = "ghello" });
+    parallel(tes2, .{ .string = "ghello" }, .{ .num_threads = 4 });
 }
 
-pub fn tes(om: *omp_ctx, args: anytype) void {
-    om.master(tes2, args);
-}
-
-pub fn tes2(args: anytype) void {
+// pub fn tes(om: *omp_ctx, args: anytype) void {
+//     om.master(tes2, args);
+// }
+//
+pub fn tes2(om: *omp_ctx, args: anytype) void {
+    _ = om;
     std.debug.print("its aliveeee {s}\n", .{args.string});
 }
