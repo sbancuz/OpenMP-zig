@@ -28,7 +28,7 @@ const omp_ctx = struct {
     pub fn parallel(f: anytype, args: anytype) void {
         var id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
-            .psource = "parallel",
+            .psource = "parallel" ++ @typeName(@TypeOf(f)),
         };
 
         kmp.fork_call(&id, 1, @ptrCast(&omp_ctx.make_outline(@TypeOf(args), f).outline), &args);
@@ -38,11 +38,11 @@ const omp_ctx = struct {
         const thread = this.global_tid;
         var single_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
-            .psource = "single",
+            .psource = "single" ++ @typeName(@TypeOf(f)),
         };
         var barrier_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_BARRIER_IMPL_SINGLE),
-            .psource = "single",
+            .psource = "single" ++ @typeName(@TypeOf(f)),
         };
 
         if (kmp.single(&single_id, thread) == 1) {
