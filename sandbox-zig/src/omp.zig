@@ -51,6 +51,18 @@ const omp_ctx = struct {
         }
         kmp.barrier(&barrier_id, thread);
     }
+
+    pub fn master(this: *Self, f: anytype, args: anytype) void {
+        const thread = this.global_tid;
+        var master_id = .{
+            .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
+            .psource = "master" ++ @typeName(@TypeOf(f)),
+        };
+
+        if (kmp.master(&master_id, thread) == 1) {
+            f(args);
+        }
+    }
 };
 
 pub fn main() !void {
@@ -58,7 +70,7 @@ pub fn main() !void {
 }
 
 pub fn tes(om: *omp_ctx, args: anytype) void {
-    om.single(tes2, args);
+    om.master(tes2, args);
 }
 
 pub fn tes2(args: anytype) void {

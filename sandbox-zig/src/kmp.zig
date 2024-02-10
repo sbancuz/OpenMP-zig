@@ -53,6 +53,16 @@ pub fn fork_call(name: *ident_t, argc: c_int, fun: *const kmpc_micro, args: anyt
     __kmpc_fork_call(name, argc, fun, args);
 }
 
+extern "C" fn __kmpc_master(loc: *ident_t, global_tid: c_int) c_int;
+pub fn master(name: *ident_t, global_tid: c_int) c_int {
+    return __kmpc_master(name, global_tid);
+}
+
+extern "C" fn __kmpc_end_master(loc: *ident_t, global_tid: c_int) void;
+pub fn end_master(name: *ident_t, global_tid: c_int) void {
+    __kmpc_end_master(name, global_tid);
+}
+
 extern "C" fn __kmpc_single(loc: *ident_t, global_tid: c_int) c_int;
 pub fn single(name: *ident_t, global_tid: c_int) c_int {
     return __kmpc_single(name, global_tid);
