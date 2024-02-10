@@ -1,0 +1,4 @@
+/zig-*/
+.direnv/
+.envrc
+flake.lock
