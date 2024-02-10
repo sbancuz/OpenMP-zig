@@ -52,7 +52,11 @@ extern "C" fn __kmpc_fork_call(name: *ident_t, argc: c_int, fun: *const kmpc_mic
 pub fn fork_call(name: *ident_t, argc: c_int, fun: *const kmpc_micro, args: anytype) void {
     __kmpc_fork_call(name, argc, fun, args);
 }
-
+// it's not really variadic, so make sure to pass only one argument
+extern "C" fn __kmpc_fork_call_if(name: *ident_t, argc: c_int, fun: *const kmpc_micro, cond: c_int, ...) void;
+pub fn fork_call_if(name: *ident_t, argc: c_int, fun: *const kmpc_micro, cond: c_int, args: anytype) void {
+    __kmpc_fork_call_if(name, argc, fun, cond, args);
+}
 extern "C" fn __kmpc_master(loc: *ident_t, global_tid: c_int) c_int;
 pub fn master(name: *ident_t, global_tid: c_int) c_int {
     return __kmpc_master(name, global_tid);
