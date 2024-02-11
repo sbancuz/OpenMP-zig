@@ -38,7 +38,11 @@ pub const flags = enum(c_int) {
 };
 
 pub const sched_t = enum(c_int) {
-    SCHEDULE_STATIC = 0x22,
+    StaticChunked = 33,
+    StaticNonChunked = 34,
+    Dynamic = 35,
+    Guided = 36,
+    Runtime = 37,
 };
 
 pub const ident_t = extern struct {

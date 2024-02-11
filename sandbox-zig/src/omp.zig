@@ -11,6 +11,10 @@ pub const parallel_opts = struct {
     condition: ?bool = undefined,
 };
 
+pub const parallel_for_opts = struct {
+    sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
+};
+
 pub fn parallel(f: anytype, args: anytype, opts: parallel_opts) void {
     var id = .{
         .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
@@ -74,13 +78,15 @@ const omp_ctx = struct {
         }
     }
 
-    pub fn parallel_for(this: *Self, f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype) void {
+    pub fn parallel_for(this: *Self, f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) void {
         var id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
         };
 
-        var sched: c_int = @intFromEnum(kmp.sched_t.SCHEDULE_STATIC);
+        // TODO: Don't know what will happen with other schedules
+        std.debug.assert(opts.sched == kmp.sched_t.StaticNonChunked);
+        var sched: c_int = @intFromEnum(opts);
         var last_iter: c_int = 0;
 
         const T = comptime ret: {
@@ -101,6 +107,7 @@ const omp_ctx = struct {
             }
         };
 
+        // TOOD: Figure out how to use all of these values
         var low: T = 0;
         var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower)) / increment));
         var stri: T = 1;
@@ -122,7 +129,7 @@ pub fn main() !void {
 }
 
 pub fn tes(om: *omp_ctx, args: anytype) void {
-    om.parallel_for(tes2, args, 0, 13, 1);
+    om.parallel_for(tes2, args, 0, 13, 2);
 }
 
 var a: c_int = 0;
