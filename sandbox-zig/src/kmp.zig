@@ -37,6 +37,10 @@ pub const flags = enum(c_int) {
     // IDENT_OPENMP_SPEC_VERSION_MASK = 0xFF000000,
 };
 
+pub const sched_t = enum(c_int) {
+    SCHEDULE_STATIC = 0x22,
+};
+
 pub const ident_t = extern struct {
     // might be used in fortran, we can just keep it 0
     reserved_1: c_int = 0,
@@ -57,6 +61,30 @@ extern "C" fn __kmpc_fork_call_if(name: *ident_t, argc: c_int, fun: *const kmpc_
 pub fn fork_call_if(name: *ident_t, argc: c_int, fun: *const kmpc_micro, cond: c_int, args: anytype) void {
     __kmpc_fork_call_if(name, argc, fun, cond, args);
 }
+
+extern "C" fn __kmpc_for_static_init_4(loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_int, pupper: *c_int, pstride: *c_int, incr: c_int, chunk: c_int) void;
+extern "C" fn __kmpc_for_static_init_4u(loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_uint, pupper: *c_uint, pstride: *c_int, incr: c_int, chunk: c_int) void;
+extern "C" fn __kmpc_for_static_init_8(loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_long, pupper: *c_long, pstride: *c_long, incr: c_long, chunk: c_long) void;
+extern "C" fn __kmpc_for_static_init_8u(loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_ulong, pupper: *c_ulong, pstride: *c_long, incr: c_long, chunk: c_long) void;
+pub fn for_static_init(comptime T: type, loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *T, pupper: *T, pstride: *T, incr: T, chunk: T) void {
+    if (T == c_int) {
+        __kmpc_for_static_init_4(loc, gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
+    } else if (T == c_uint) {
+        __kmpc_for_static_init_4u(loc, gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
+    } else if (T == c_long) {
+        __kmpc_for_static_init_8(loc, gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
+    } else if (T == c_ulong) {
+        __kmpc_for_static_init_8u(loc, gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
+    } else {
+        unreachable;
+    }
+}
+
+extern "C" fn __kmpc_for_static_fini(loc: *ident_t, global_tid: c_int) void;
+pub fn for_static_fini(name: *ident_t, global_tid: c_int) void {
+    __kmpc_for_static_fini(name, global_tid);
+}
+
 extern "C" fn __kmpc_master(loc: *ident_t, global_tid: c_int) c_int;
 pub fn master(name: *ident_t, global_tid: c_int) c_int {
     return __kmpc_master(name, global_tid);

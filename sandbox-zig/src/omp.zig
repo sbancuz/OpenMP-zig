@@ -7,8 +7,8 @@ const omp = @cImport({
 const kmp = @import("kmp.zig");
 
 pub const parallel_opts = struct {
-    num_threads: ?c_int,
-    condition: ?bool,
+    num_threads: ?c_int = undefined,
+    condition: ?bool = undefined,
 };
 
 pub fn parallel(f: anytype, args: anytype, opts: parallel_opts) void {
@@ -47,7 +47,6 @@ const omp_ctx = struct {
     }
 
     pub fn single(this: *Self, f: anytype, args: anytype) void {
-        const thread = this.global_tid;
         var single_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
             .psource = "single" ++ @typeName(@TypeOf(f)),
@@ -57,35 +56,79 @@ const omp_ctx = struct {
             .psource = "single" ++ @typeName(@TypeOf(f)),
         };
 
-        if (kmp.single(&single_id, thread) == 1) {
-            f(args);
-            kmp.end_single(&single_id, thread);
+        if (kmp.single(&single_id, this.global_tid) == 1) {
+            f(this, args);
+            kmp.end_single(&single_id, this.global_tid);
         }
-        kmp.barrier(&barrier_id, thread);
+        kmp.barrier(&barrier_id, this.global_tid);
     }
 
     pub fn master(this: *Self, f: anytype, args: anytype) void {
-        const thread = this.global_tid;
         var master_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
             .psource = "master" ++ @typeName(@TypeOf(f)),
         };
 
-        if (kmp.master(&master_id, thread) == 1) {
-            f(args);
+        if (kmp.master(&master_id, this.global_tid) == 1) {
+            f(this, args);
         }
+    }
+
+    pub fn parallel_for(this: *Self, f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype) void {
+        var id = .{
+            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
+            .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+        };
+
+        var sched: c_int = @intFromEnum(kmp.sched_t.SCHEDULE_STATIC);
+        var last_iter: c_int = 0;
+
+        const T = comptime ret: {
+            if (std.meta.trait.isSignedInt(@TypeOf(lower))) {
+                if (@sizeOf(@TypeOf(lower)) <= 4) {
+                    break :ret c_int;
+                } else {
+                    break :ret c_long;
+                }
+            } else if (std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
+                if (@sizeOf(@TypeOf(lower)) <= 4) {
+                    break :ret c_uint;
+                } else {
+                    break :ret c_ulong;
+                }
+            } else {
+                @panic("Tried to loop over a non-integer type.");
+            }
+        };
+
+        var low: T = 0;
+        var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower)) / increment));
+        var stri: T = 1;
+        var incr: T = 1;
+        var chunk: T = 1;
+
+        kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
+        // No do-while loops in Zig, so we have to do this. Sadge
+        f(this, args);
+        while (@atomicRmw(T, &low, .Add, incr, .Monotonic) < upp) {
+            f(this, args);
+        }
+        kmp.for_static_fini(&id, this.global_tid);
     }
 };
 
 pub fn main() !void {
-    parallel(tes2, .{ .string = "ghello" }, .{ .num_threads = 4, .condition = false });
+    parallel(tes, .{ .string = "gello" }, .{ .num_threads = 4 });
 }
 
-// pub fn tes(om: *omp_ctx, args: anytype) void {
-//     om.master(tes2, args);
-// }
-//
+pub fn tes(om: *omp_ctx, args: anytype) void {
+    om.parallel_for(tes2, args, 0, 13, 1);
+}
+
+var a: c_int = 0;
+
 pub fn tes2(om: *omp_ctx, args: anytype) void {
+    _ = args;
     _ = om;
-    std.debug.print("its aliveeee {s}\n", .{args.string});
+    std.debug.print("its aliveeee {}\n", .{@atomicRmw(c_int, &a, .Add, 1, .Monotonic)});
 }
