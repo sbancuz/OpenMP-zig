@@ -111,15 +111,11 @@ const omp_ctx = struct {
         var low: T = 0;
         var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower)) / increment));
         var stri: T = 1;
-        var incr: T = 1;
+        var incr: T = increment;
         var chunk: T = 1;
 
-        std.debug.print("low: {}\n", .{upp});
-
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
-        // No do-while loops in Zig, so we have to do this. Sadge
-        f(this, args);
-        while (@atomicRmw(T, &low, .Add, incr, .Monotonic) < upp) {
+        while (@atomicRmw(T, &low, .Add, incr, .AcqRel) <= upp) {
             f(this, args);
         }
 
@@ -143,9 +139,9 @@ const omp_ctx = struct {
     }
 
     pub fn critical(this: *Self, f: anytype, args: anytype) void {
-        kmp.critical(this.global_tid);
+        kmp.critical();
         f(this, args);
-        kmp.critical_end(this.global_tid);
+        kmp.critical_end();
     }
 };
 
@@ -154,7 +150,7 @@ pub fn main() !void {
 }
 
 pub fn tes(om: *omp_ctx, args: anytype) void {
-    om.parallel_for(tes2, args, 0, 13, 1, .{});
+    om.parallel_for(tes2, args, 0, 4, 2, .{});
 }
 
 var a: c_int = 0;

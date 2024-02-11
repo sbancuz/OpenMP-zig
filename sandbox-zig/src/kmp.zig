@@ -128,12 +128,12 @@ pub fn push_num_threads(name: *ident_t, global_tid: c_int, num_threads: c_int) v
 
 // Maybe figure out how to use the clang API, but since this GOMP is supported by clang we can just use it
 // This is "needed" because it's an API that doesn't need to use the name for which i don't know the rules to it
-extern "C" fn GOMP_critical_start(global_tid: c_int) void;
-pub fn critical(global_tid: c_int) void {
-    GOMP_critical_start(global_tid);
+extern "C" fn GOMP_critical_start() void;
+pub fn critical() void {
+    GOMP_critical_start();
 }
 
-extern "C" fn GOMP_critical_end(global_tid: c_int) void;
-pub fn critical_end(global_tid: c_int) void {
-    GOMP_critical_end(global_tid);
+extern "C" fn GOMP_critical_end() void;
+pub fn critical_end() void {
+    GOMP_critical_end();
 }
