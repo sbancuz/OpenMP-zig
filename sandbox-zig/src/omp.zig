@@ -86,7 +86,7 @@ const omp_ctx = struct {
 
         // TODO: Don't know what will happen with other schedules
         std.debug.assert(opts.sched == kmp.sched_t.StaticNonChunked);
-        var sched: c_int = @intFromEnum(opts);
+        var sched: c_int = @intFromEnum(opts.sched);
         var last_iter: c_int = 0;
 
         const T = comptime ret: {
@@ -114,13 +114,21 @@ const omp_ctx = struct {
         var incr: T = 1;
         var chunk: T = 1;
 
+        std.debug.print("low: {}\n", .{upp});
+
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
         // No do-while loops in Zig, so we have to do this. Sadge
         f(this, args);
         while (@atomicRmw(T, &low, .Add, incr, .Monotonic) < upp) {
             f(this, args);
         }
-        kmp.for_static_fini(&id, this.global_tid);
+
+        var id_fini = .{
+            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
+            .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+            .reserved_3 = 0x1b,
+        };
+        kmp.for_static_fini(&id_fini, this.global_tid);
 
         // Figure out a way to not use this when not needed
         kmp.barrier(&id, this.global_tid);
@@ -133,20 +141,32 @@ const omp_ctx = struct {
         };
         kmp.barrier(&id, this.global_tid);
     }
+
+    pub fn critical(this: *Self, f: anytype, args: anytype) void {
+        kmp.critical(this.global_tid);
+        f(this, args);
+        kmp.critical_end(this.global_tid);
+    }
 };
 
 pub fn main() !void {
-    parallel(tes, .{ .string = "gello" }, .{ .num_threads = 4 });
+    parallel(tes, .{ .string = "gello" }, .{ .num_threads = 8 });
 }
 
 pub fn tes(om: *omp_ctx, args: anytype) void {
-    om.parallel_for(tes2, args, 0, 13, 2);
+    om.parallel_for(tes2, args, 0, 13, 1, .{});
 }
 
 var a: c_int = 0;
 
 pub fn tes2(om: *omp_ctx, args: anytype) void {
     _ = args;
+    om.critical(test3, .{});
+    std.debug.print("its aliveeee {}\n", .{a});
+}
+
+pub fn test3(om: *omp_ctx, args: anytype) void {
+    _ = args;
     _ = om;
-    std.debug.print("its aliveeee {}\n", .{@atomicRmw(c_int, &a, .Add, 1, .Monotonic)});
+    a += 1;
 }
