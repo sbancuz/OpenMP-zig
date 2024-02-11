@@ -121,6 +121,17 @@ const omp_ctx = struct {
             f(this, args);
         }
         kmp.for_static_fini(&id, this.global_tid);
+
+        // Figure out a way to not use this when not needed
+        kmp.barrier(&id, this.global_tid);
+    }
+
+    pub fn barrier(this: *Self) void {
+        var id = .{
+            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
+            .psource = "barrier",
+        };
+        kmp.barrier(&id, this.global_tid);
     }
 };
 
