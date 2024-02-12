@@ -31,7 +31,7 @@ pub fn parallel(f: anytype, args: anytype, opts: parallel_opts) void {
     }
 }
 
-const omp_ctx = struct {
+pub const omp_ctx = struct {
     const Self = @This();
 
     global_tid: c_int,
@@ -109,7 +109,7 @@ const omp_ctx = struct {
 
         // TOOD: Figure out how to use all of these values
         var low: T = 0;
-        var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower)) / increment));
+        var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower - 1)) / increment));
         var stri: T = 1;
         var incr: T = increment;
         var chunk: T = 1;
