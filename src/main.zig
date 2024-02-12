@@ -11,8 +11,7 @@ test "main" {
 }
 
 pub fn tes(om: *omp.omp_ctx, args: anytype) ?u32 {
-    _ = args;
-    _ = om;
+    om.parallel_for(tes2, args, 0, 4, 2, .{});
 
     return undefined;
 }
