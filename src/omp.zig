@@ -15,7 +15,7 @@ pub const parallel_for_opts = struct {
     sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
 };
 
-pub fn parallel(f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
+pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
     var id = .{
         .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
         .psource = "parallel" ++ @typeName(@TypeOf(f)),
@@ -42,8 +42,27 @@ pub fn parallel(f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
     }
 }
 
-fn copy_ret(comptime f: anytype) type {
+inline fn copy_ret(comptime f: anytype) type {
     return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
+}
+
+inline fn call_fn(comptime f: anytype, args: anytype) copy_ret(f) {
+    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+    if (copy_ret(f) != void) {
+        if (type_info == .ErrorUnion) {
+            return try @call(.auto, f, args);
+        } else {
+            if (@call(.auto, f, args)) |ret| {
+                return ret;
+            }
+        }
+    } else {
+        if (type_info == .ErrorSet) {
+            try @call(.auto, f, args);
+        } else {
+            @call(.auto, f, args);
+        }
+    }
 }
 
 pub const omp_ctx = struct {
@@ -53,7 +72,7 @@ pub const omp_ctx = struct {
     bound_tid: c_int,
 
     fn make_outline(comptime T: type, comptime R: type, comptime f: fn (*omp_ctx, anytype) R) type {
-        std.debug.assert(R == void or @typeInfo(R) == .Optional);
+        std.debug.assert(R == void or @typeInfo(R) == .Optional or @typeInfo(R) == .ErrorSet or @typeInfo(R) == .ErrorUnion);
 
         return opaque {
             fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
@@ -63,51 +82,41 @@ pub const omp_ctx = struct {
                 };
                 var true_args = argss.args;
 
-                if (R != void) {
-                    if (f(&this, true_args)) |ret| {
-                        argss.ret = ret;
-                        return;
-                    }
-                } else {
-                    f(&this, true_args);
-                }
-
-                return undefined;
+                argss.ret = call_fn(f, .{ &this, true_args }) catch |err| err;
+                return;
             }
         };
     }
 
     pub fn single(this: *Self, f: anytype, args: anytype) copy_ret(f) {
-        var single_id = .{
+        const single_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
             .psource = "single" ++ @typeName(@TypeOf(f)),
         };
-        var barrier_id = .{
+        const barrier_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_BARRIER_IMPL_SINGLE),
             .psource = "single" ++ @typeName(@TypeOf(f)),
         };
 
         if (kmp.single(&single_id, this.global_tid) == 1) {
-            f(this, args);
+            try call_fn(f, .{ this, args });
             kmp.end_single(&single_id, this.global_tid);
         }
         kmp.barrier(&barrier_id, this.global_tid);
+
+        if (copy_ret(f) != void) {
+            return undefined;
+        }
     }
 
     pub fn master(this: *Self, f: anytype, args: anytype) copy_ret(f) {
-        var master_id = .{
+        const master_id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
             .psource = "master" ++ @typeName(@TypeOf(f)),
         };
 
         if (kmp.master(&master_id, this.global_tid) == 1) {
-            if (copy_ret(f) != void) {
-                if (f(this, args)) |ret| {
-                    return ret;
-                }
-            } else {
-                f(this, args);
-            }
+            try call_fn(f, .{ this, args });
         }
 
         if (copy_ret(f) != void) {
@@ -152,17 +161,12 @@ pub const omp_ctx = struct {
         var chunk: T = 1;
 
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
+
         while (@atomicRmw(T, &low, .Add, incr, .AcqRel) <= upp) {
-            if (copy_ret(f) != void) {
-                if (f(this, upp, args)) |ret| {
-                    return ret;
-                }
-            } else {
-                f(this, upp, args);
-            }
+            try call_fn(f, .{ this, upp, args });
         }
 
-        var id_fini = .{
+        const id_fini = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
             .reserved_3 = 0x1b,
@@ -178,7 +182,7 @@ pub const omp_ctx = struct {
     }
 
     pub fn barrier(this: *Self) void {
-        var id = .{
+        const id = .{
             .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
             .psource = "barrier",
         };
@@ -187,14 +191,8 @@ pub const omp_ctx = struct {
 
     pub fn critical(this: *Self, f: anytype, args: anytype) copy_ret(f) {
         kmp.critical();
-        if (copy_ret(f) != void) {
-            if (f(this, args)) |ret| {
-                return ret;
-            }
-        } else {
-            f(this, args);
-        }
 
+        try call_fn(f, .{ this, args });
         kmp.critical_end();
 
         if (copy_ret(f) != void) {

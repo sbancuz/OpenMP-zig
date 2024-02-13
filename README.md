@@ -4,7 +4,7 @@ An implementation of the OpenMP directives for Zig
 ## !!! This implementation is incomplete and highly experimental
 
 To support:
-- [ ] `error return types from directives`
+- [x] `error return types from directives`
 - [x] `early return from directives`
 - [x] `#pragma omp parallel`
 - [x] `#pragma omp for` (extremely limited for now)
@@ -15,6 +15,7 @@ To support:
 - [x] `#pragma omp critical`
 - [x] `#pragma omp barrier`
 - [ ] `#pragma omp task`
+- [ ] `proper testing`
 
 ## Usage
 ```zig
