@@ -14,7 +14,7 @@ To support:
 - [x] `#pragma omp master`
 - [x] `#pragma omp critical`
 - [x] `#pragma omp barrier`
-- [ ] `#pragma omp task`
+- [x] `#pragma omp task` (extremely limited for now, no dependencies)
 - [ ] `proper testing`
 
 ## Usage

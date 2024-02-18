@@ -1,9 +1,4 @@
 const std = @import("std");
-
-const omp = @cImport({
-    @cInclude("omp.h");
-});
-
 const kmp = @import("kmp.zig");
 
 pub const parallel_opts = struct {
@@ -17,7 +12,7 @@ pub const parallel_for_opts = struct {
 
 pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
     var id = .{
-        .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "parallel" ++ @typeName(@TypeOf(f)),
     };
     if (opts.num_threads) |num| {
@@ -65,6 +60,10 @@ inline fn call_fn(comptime f: anytype, args: anytype) copy_ret(f) {
     }
 }
 
+noinline fn call_fn_no_inline(comptime f: anytype, args: anytype) copy_ret(f) {
+    return try call_fn(f, args);
+}
+
 pub const omp_ctx = struct {
     const Self = @This();
 
@@ -90,11 +89,11 @@ pub const omp_ctx = struct {
 
     pub fn single(this: *Self, f: anytype, args: anytype) copy_ret(f) {
         const single_id = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "single" ++ @typeName(@TypeOf(f)),
         };
         const barrier_id = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_BARRIER_IMPL_SINGLE),
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_BARRIER_IMPL_SINGLE),
             .psource = "single" ++ @typeName(@TypeOf(f)),
         };
 
@@ -111,7 +110,7 @@ pub const omp_ctx = struct {
 
     pub fn master(this: *Self, f: anytype, args: anytype) copy_ret(f) {
         const master_id = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC),
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "master" ++ @typeName(@TypeOf(f)),
         };
 
@@ -126,7 +125,7 @@ pub const omp_ctx = struct {
 
     pub fn parallel_for(this: *Self, f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) copy_ret(f) {
         var id = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
         };
 
@@ -167,7 +166,7 @@ pub const omp_ctx = struct {
         }
 
         const id_fini = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
             .reserved_3 = 0x1b,
         };
@@ -183,7 +182,7 @@ pub const omp_ctx = struct {
 
     pub fn barrier(this: *Self) void {
         const id = .{
-            .flags = @intFromEnum(kmp.flags.IDENT_KMPC) | @intFromEnum(kmp.flags.IDENT_WORK_LOOP),
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
         };
         kmp.barrier(&id, this.global_tid);
@@ -197,6 +196,48 @@ pub const omp_ctx = struct {
 
         if (copy_ret(f) != void) {
             return undefined;
+        }
+    }
+
+    fn outline(comptime f: anytype, comptime ret_type: type) type {
+        return opaque {
+            // This comes from decompiling the outline with ghidra
+            // It should never really change since it's just a wrapper around the actual function
+            // and it can't inline anything even if it wanted to
+            //
+            // remember to update the size_in_release_debug if the function changes, can't really enforce it though
+            const size_in_release_debug = 42;
+            fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
+                _ = gtid;
+
+                pass.ret = call_fn_no_inline(f, .{ pass.this, pass.args });
+                return 0;
+            }
+        };
+    }
+
+    pub fn task(this: *Self, f: anytype, args: anytype) copy_ret(f) {
+        var id = .{
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+            .psource = "task" ++ @typeName(@TypeOf(f)),
+        };
+
+        const ret_type = struct {
+            ret: copy_ret(f) = undefined,
+            this: *Self,
+            args: @TypeOf(args),
+        };
+
+        var ret: ret_type = .{ .this = this, .args = args };
+
+        const task_outline = outline(f, ret_type);
+
+        var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, task_outline.size_in_release_debug, 0, task_outline.task);
+        t.shareds = &ret.args;
+        _ = kmp.task(&id, this.global_tid, t);
+
+        if (copy_ret(f) != void) {
+            return ret.ret;
         }
     }
 };

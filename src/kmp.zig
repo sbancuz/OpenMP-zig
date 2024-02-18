@@ -1,4 +1,4 @@
-pub const flags = enum(c_int) {
+pub const ident_flags = enum(c_int) {
     // /*! Use trampoline for internal microtasks */
     IDENT_IMB = 0x01,
     // /*! Use c-style ident structure */
@@ -136,4 +136,82 @@ pub inline fn critical() void {
 extern "C" fn GOMP_critical_end() void;
 pub inline fn critical_end() void {
     GOMP_critical_end();
+}
+
+// Todo: invert for big endian
+const kmp_tasking_flags = packed struct {
+    tiedness: u1 = 0, // task is either tied (1) or untied (0) */
+    final: u1 = 0, // task is final(1) so execute immediately */
+    merged_if0: u1 = 0, // no __kmpc_task_{begin/complete}_if0 calls in if0               code path */
+    destructors_thunk: u1 = 0, // set if the compiler creates a thunk toinvoke destructors from the runtime */
+    proxy: u1 = 0, // task is a proxy task (it will be executed outside thecontext of the RTL) */
+    priority_specified: u1 = 0, // set if the compiler provides priority setting for the task */
+    detachable: u1 = 0, // 1 == can detach */
+    hidden_helper: u1 = 0, // 1 == hidden helper task */
+    reserved: u8 = 0, // reserved for compiler use */
+
+    // Library flags */ /* Total library flags must be 1 = 0,6 bits */
+    tasktype: u1 = 0, // task is either explicit(1) or implicit (0) */
+    task_serial: u1 = 0, // task is executed immediately (1) or deferred (0)
+    tasking_ser: u1 = 0, // all tasks in team are either executed immediately
+    // (1 = 0,) or may be deferred (0)
+    team_serial: u1 = 0, // entire team is serial (1) [1 thread] or parallel
+    // (0) [>= 2 threads]
+    // If either team_serial or tasking_ser is set = 0, task team may be NULL */
+    // Task State Flags: u*/
+    started: u1 = 0, // 1==started, 0==not started     */
+    executing: u1 = 0, // 1==executing, 0==not executing */
+    complete: u1 = 0, // 1==complete, 0==not complete   */
+    freed: u1 = 0, // 1==freed, 0==allocated        */
+    native: u1 = 0, // 1==gcc-compiled task, 0==intel */
+    onced: u1 = 0, // 1==ran once already, 0==never ran, record & replay purposes */
+    reserved31: u6 = 0, // reserved for library use */
+};
+const kmp_routine_entry_t = *const fn (c_int, *anyopaque) callconv(.C) c_int;
+pub const kmp_task_t = extern struct {
+    shareds: *anyopaque,
+    routine: kmp_routine_entry_t,
+    part_id: c_int,
+    data1: kmp_routine_entry_t,
+    data2: kmp_routine_entry_t,
+};
+
+extern "C" fn __kmpc_omp_task(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) c_int;
+pub inline fn task(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) c_int {
+    return __kmpc_omp_task(@constCast(name), gtid, new_task);
+}
+
+// Same trick as before, this is not really variadic
+extern "C" fn __kmpc_omp_task_alloc(loc_ref: *ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, ...) *kmp_task_t;
+pub inline fn task_alloc(name: *ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: anytype) *kmp_task_t {
+    return __kmpc_omp_task_alloc(@constCast(name), gtid, @bitCast(flags), sizeof_kmp_task_t, sizeof_shareds, task_entry);
+}
+extern "C" fn __kmpc_omp_target_task_alloc(loc_ref: *ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t;
+pub inline fn target_task_alloc(name: *ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t {
+    return __kmpc_omp_target_task_alloc(@constCast(name), gtid, flags, sizeof_kmp_task_t, sizeof_shareds, task_entry, device_id);
+}
+
+extern "C" fn __kmpc_omp_task_begin_if0(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) void;
+pub inline fn task_begin_if0(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) void {
+    __kmpc_omp_task_begin_if0(@constCast(name), gtid, new_task);
+}
+
+extern "C" fn __kmpc_omp_task_complete_if0(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) void;
+pub inline fn task_complete_if0(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) void {
+    __kmpc_omp_task_complete_if0(@constCast(name), gtid, new_task);
+}
+
+extern "C" fn __kmpc_omp_task_parts(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int;
+pub inline fn task_parts(name: *ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int {
+    return __kmpc_omp_task_parts(@constCast(name), gtid, new_task, part);
+}
+
+extern "C" fn __kmpc_omp_taskwait(loc_ref: *ident_t, gtid: c_int) c_int;
+pub inline fn taskwait(name: *ident_t, gtid: c_int) c_int {
+    return __kmpc_omp_taskwait(@constCast(name), gtid);
+}
+
+extern "C" fn __kmpc_omp_taskyield(loc_ref: *ident_t, gtid: c_int, end_part: c_int) c_int;
+pub inline fn taskyield(name: *ident_t, gtid: c_int, end_part: c_int) c_int {
+    return __kmpc_omp_taskyield(@constCast(name), gtid, end_part);
 }
