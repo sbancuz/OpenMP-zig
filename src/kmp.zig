@@ -186,32 +186,38 @@ extern "C" fn __kmpc_omp_task_alloc(loc_ref: *ident_t, gtid: c_int, flags: c_int
 pub inline fn task_alloc(name: *ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: anytype) *kmp_task_t {
     return __kmpc_omp_task_alloc(@constCast(name), gtid, @bitCast(flags), sizeof_kmp_task_t, sizeof_shareds, task_entry);
 }
-extern "C" fn __kmpc_omp_target_task_alloc(loc_ref: *ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t;
-pub inline fn target_task_alloc(name: *ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t {
-    return __kmpc_omp_target_task_alloc(@constCast(name), gtid, flags, sizeof_kmp_task_t, sizeof_shareds, task_entry, device_id);
-}
-
-extern "C" fn __kmpc_omp_task_begin_if0(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) void;
-pub inline fn task_begin_if0(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) void {
-    __kmpc_omp_task_begin_if0(@constCast(name), gtid, new_task);
-}
-
-extern "C" fn __kmpc_omp_task_complete_if0(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) void;
-pub inline fn task_complete_if0(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) void {
-    __kmpc_omp_task_complete_if0(@constCast(name), gtid, new_task);
-}
-
-extern "C" fn __kmpc_omp_task_parts(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int;
-pub inline fn task_parts(name: *ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int {
-    return __kmpc_omp_task_parts(@constCast(name), gtid, new_task, part);
-}
-
-extern "C" fn __kmpc_omp_taskwait(loc_ref: *ident_t, gtid: c_int) c_int;
-pub inline fn taskwait(name: *ident_t, gtid: c_int) c_int {
-    return __kmpc_omp_taskwait(@constCast(name), gtid);
-}
 
 extern "C" fn __kmpc_omp_taskyield(loc_ref: *ident_t, gtid: c_int, end_part: c_int) c_int;
-pub inline fn taskyield(name: *ident_t, gtid: c_int, end_part: c_int) c_int {
-    return __kmpc_omp_taskyield(@constCast(name), gtid, end_part);
+pub inline fn taskyield(name: *ident_t, gtid: c_int) c_int {
+    // Not really sure what end_part is, so always set it to 0. Even whithin the runtime it's used only in logging
+    return __kmpc_omp_taskyield(@constCast(name), gtid, 0);
 }
+// extern "C" fn __kmpc_omp_target_task_alloc(loc_ref: *ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t;
+// pub inline fn target_task_alloc(name: *ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t {
+//     return __kmpc_omp_target_task_alloc(@constCast(name), gtid, flags, sizeof_kmp_task_t, sizeof_shareds, task_entry, device_id);
+// }
+//
+// extern "C" fn __kmpc_omp_task_begin_if0(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) void;
+// pub inline fn task_begin_if0(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) void {
+//     __kmpc_omp_task_begin_if0(@constCast(name), gtid, new_task);
+// }
+//
+// extern "C" fn __kmpc_omp_task_complete_if0(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t) void;
+// pub inline fn task_complete_if0(name: *ident_t, gtid: c_int, new_task: *kmp_task_t) void {
+//     __kmpc_omp_task_complete_if0(@constCast(name), gtid, new_task);
+// }
+//
+// extern "C" fn __kmpc_omp_task_parts(loc_ref: *ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int;
+// pub inline fn task_parts(name: *ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int {
+//     return __kmpc_omp_task_parts(@constCast(name), gtid, new_task, part);
+// }
+//
+// extern "C" fn __kmpc_omp_taskwait(loc_ref: *ident_t, gtid: c_int) c_int;
+// pub inline fn taskwait(name: *ident_t, gtid: c_int) c_int {
+//     return __kmpc_omp_taskwait(@constCast(name), gtid);
+// }
+//
+// extern "C" fn __kmpc_omp_taskyield(loc_ref: *ident_t, gtid: c_int, end_part: c_int) c_int;
+// pub inline fn taskyield(name: *ident_t, gtid: c_int, end_part: c_int) c_int {
+//     return __kmpc_omp_taskyield(@constCast(name), gtid, end_part);
+// }

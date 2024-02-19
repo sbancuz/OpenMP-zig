@@ -240,4 +240,12 @@ pub const omp_ctx = struct {
             return ret.ret;
         }
     }
+
+    pub fn taskyeild(this: *Self) void {
+        const id = .{
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+            .psource = "taskyeild",
+        };
+        kmp.taskyield(&id, this.global_tid);
+    }
 };
