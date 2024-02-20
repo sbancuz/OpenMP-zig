@@ -23,7 +23,7 @@ const omp = @import("omp.zig");
 const std = @import("std");
 
 pub fn main() void {
-    const res = omp.parallel(tes, .{ .string = "hello" }, .{ .num_threads = 8 });
+    const res = omp.parallel(tes, .{ "hello" }, .{ .num_threads = 8 });
     if (res) |r| {
         std.debug.print("res: {any}\n", .{r});
     } else {
@@ -31,14 +31,14 @@ pub fn main() void {
     }
 }
 
-pub fn tes(om: *omp.omp_ctx, args: anytype) anyerror!?u32 {
-    om.parallel_for(tes2, args, 0, 4, 2, .{});
+pub fn tes(om: *omp.omp_ctx, string: []const u8) anyerror!?u32 {
+    om.parallel_for(tes2, string, 0, 4, 2, .{});
 
     return 3;
 }
 
-pub fn tes2(om: *omp.omp_ctx, i: c_int, args: anytype) void {
-    std.debug.print("its aliveeee {s} {} \n", .{ args.string, i });
+pub fn tes2(om: *omp.omp_ctx, i: c_int, string: []const u8) void {
+    std.debug.print("its aliveeee {s} {} \n", .{ string, i });
 }
 
 
