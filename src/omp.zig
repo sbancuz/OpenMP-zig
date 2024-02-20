@@ -11,6 +11,12 @@ pub const parallel_for_opts = struct {
 };
 
 pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
+    const args_type_info = @typeInfo(@TypeOf(args));
+    if (args_type_info != .Struct) {
+        std.debug.print("Expected struct, got {}\n", .{args_type_info});
+        return 1;
+    }
+
     var id = .{
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "parallel" ++ @typeName(@TypeOf(f)),
@@ -61,7 +67,22 @@ inline fn call_fn(comptime f: anytype, args: anytype) copy_ret(f) {
 }
 
 noinline fn call_fn_no_inline(comptime f: anytype, args: anytype) copy_ret(f) {
-    return try call_fn(f, args);
+    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+    if (copy_ret(f) != void) {
+        if (type_info == .ErrorUnion) {
+            return try @call(.auto, f, args);
+        } else {
+            if (@call(.auto, f, args)) |ret| {
+                return ret;
+            }
+        }
+    } else {
+        if (type_info == .ErrorSet) {
+            try @call(.auto, f, args);
+        } else {
+            @call(.auto, f, args);
+        }
+    }
 }
 
 pub const omp_ctx = struct {
@@ -70,7 +91,7 @@ pub const omp_ctx = struct {
     global_tid: c_int,
     bound_tid: c_int,
 
-    fn make_outline(comptime T: type, comptime R: type, comptime f: fn (*omp_ctx, anytype) R) type {
+    fn make_outline(comptime T: type, comptime R: type, comptime f: anytype) type {
         std.debug.assert(R == void or @typeInfo(R) == .Optional or @typeInfo(R) == .ErrorSet or @typeInfo(R) == .ErrorUnion);
 
         return opaque {
@@ -81,7 +102,7 @@ pub const omp_ctx = struct {
                 };
                 var true_args = argss.args;
 
-                argss.ret = call_fn(f, .{ &this, true_args }) catch |err| err;
+                argss.ret = call_fn(f, .{&this} ++ true_args) catch |err| err;
                 return;
             }
         };
@@ -98,7 +119,7 @@ pub const omp_ctx = struct {
         };
 
         if (kmp.single(&single_id, this.global_tid) == 1) {
-            try call_fn(f, .{ this, args });
+            try call_fn(f, .{this} ++ args);
             kmp.end_single(&single_id, this.global_tid);
         }
         kmp.barrier(&barrier_id, this.global_tid);
@@ -115,7 +136,7 @@ pub const omp_ctx = struct {
         };
 
         if (kmp.master(&master_id, this.global_tid) == 1) {
-            try call_fn(f, .{ this, args });
+            try call_fn(f, .{this} ++ args);
         }
 
         if (copy_ret(f) != void) {
@@ -162,7 +183,7 @@ pub const omp_ctx = struct {
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
 
         while (@atomicRmw(T, &low, .Add, incr, .AcqRel) <= upp) {
-            try call_fn(f, .{ this, upp, args });
+            try call_fn(f, .{ this, upp } ++ args);
         }
 
         const id_fini = .{
@@ -191,7 +212,7 @@ pub const omp_ctx = struct {
     pub fn critical(this: *Self, f: anytype, args: anytype) copy_ret(f) {
         kmp.critical();
 
-        try call_fn(f, .{ this, args });
+        try call_fn(f, .{this} ++ args);
         kmp.critical_end();
 
         if (copy_ret(f) != void) {
@@ -210,7 +231,7 @@ pub const omp_ctx = struct {
             fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
                 _ = gtid;
 
-                pass.ret = call_fn_no_inline(f, .{ pass.this, pass.args });
+                pass.ret = call_fn_no_inline(f, pass.args);
                 return 0;
             }
         };
@@ -222,18 +243,16 @@ pub const omp_ctx = struct {
             .psource = "task" ++ @typeName(@TypeOf(f)),
         };
 
+        const new_args = .{this} ++ args;
         const ret_type = struct {
             ret: copy_ret(f) = undefined,
-            this: *Self,
-            args: @TypeOf(args),
+            args: @TypeOf(new_args),
         };
-
-        var ret: ret_type = .{ .this = this, .args = args };
-
+        const ret: ret_type = .{ .ret = undefined, .args = new_args };
         const task_outline = outline(f, ret_type);
 
         var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, task_outline.size_in_release_debug, 0, task_outline.task);
-        t.shareds = &ret.args;
+        t.shareds = @constCast(@ptrCast(&ret));
         _ = kmp.task(&id, this.global_tid, t);
 
         if (copy_ret(f) != void) {
