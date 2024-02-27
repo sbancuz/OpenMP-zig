@@ -2,17 +2,9 @@ const omp = @import("omp.zig");
 const std = @import("std");
 
 test "main" {
-    // const something = .{ 1, 2, "hello" };
-    // const some_type_info = @typeInfo(@TypeOf(something));
-    // if (some_type_info != .Struct) {
-    //     std.debug.print("Expected struct, got {}\n", .{some_type_info});
-    //     return 1;
-    // }
-    //
-    // const new_args = .{1} ++ something;
-    // std.debug.print("new_args: {any}\n", .{new_args});
-
-    const res = try omp.parallel(tes, .{"gello"}, .{ .num_threads = 8 });
+    var foo: u8 = 1;
+    _ = foo;
+    const res = try omp.parallel(tes, .{ .shareds = .{"hallow"}, .privates = .{1} }, .{ .num_threads = 8 });
     if (res) |r| {
         std.debug.print("res: {any}\n", .{r});
     } else {
@@ -20,8 +12,11 @@ test "main" {
     }
 }
 
-pub fn tes(om: *omp.omp_ctx, str: []const u8) error{Unimplemented}!?u34 {
-    om.task(tes2, .{str});
+pub fn tes(om: *omp.omp_ctx, str: []const u8, str2: u32) error{Unimplemented}!?u34 {
+    _ = str;
+    _ = om;
+    // str2.* += 1;
+    std.debug.print("its aliveeee {} {}\n", .{ str2, str2 });
 
     return 1;
 }

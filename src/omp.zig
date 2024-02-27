@@ -10,14 +10,55 @@ pub const parallel_for_opts = struct {
     sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
 };
 
-pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
+fn check_args(args: anytype) void {
+    const args_type = @TypeOf(args);
     const args_type_info = @typeInfo(@TypeOf(args));
+
     if (args_type_info != .Struct) {
-        @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
+        @compileError("Expected struct like .{ .shareds = .{...}, .privates = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
     }
+
+    const param_count: u32 = comptime brk: {
+        var param_count: u32 = 0;
+        if (std.meta.trait.hasField("shareds")(args_type)) {
+            param_count += 1;
+        }
+
+        if (std.meta.trait.hasField("privates")(args_type)) {
+            param_count += 1;
+        }
+
+        break :brk param_count;
+    };
+
+    if (param_count != args_type_info.Struct.fields.len) {
+        @compileError("b Expected struct like .{ .shareds = .{...}, .privates = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
+    }
+}
+
+pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
+    check_args(args);
+    const args_type = @TypeOf(args);
+
+    const shareds = val: {
+        if (comptime std.meta.trait.hasField("shareds")(args_type)) {
+            break :val args.shareds;
+        }
+        break :val .{};
+    };
+
+    const privates = val: {
+        if (comptime std.meta.trait.hasField("privates")(args_type)) {
+            break :val args.privates;
+        }
+        break :val .{};
+    };
+
+    const new_args = .{ .shareds = shareds, .privates = privates };
+
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
-        @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
     if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp_ctx) {
         @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
@@ -33,10 +74,10 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
 
     const ret_type = struct {
         ret: copy_ret(f) = undefined,
-        args: @TypeOf(args),
+        args: @TypeOf(new_args),
     };
 
-    var ret: ret_type = .{ .args = args };
+    var ret: ret_type = .{ .args = new_args };
 
     if (opts.condition) |cond| {
         kmp.fork_call_if(&id, 1, @ptrCast(&omp_ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), @intFromBool(cond), &ret);
@@ -106,7 +147,28 @@ pub const omp_ctx = struct {
                     .global_tid = gtid.*,
                     .bound_tid = btid.*,
                 };
-                var true_args = argss.args;
+
+                const allocator = std.heap.page_allocator;
+                var arena = std.heap.ArenaAllocator.init(allocator);
+                const ator = arena.allocator();
+                defer arena.deinit();
+
+                const private_type = @TypeOf(argss.args.privates);
+                var private_copy = (ator.create(private_type) catch @panic("Failed to allocate memory"));
+
+                inline for (argss.args.privates, private_copy) |og, *v| {
+                    if (@typeInfo(@TypeOf(og)) == .Pointer) {
+                        v.* = @constCast((ator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
+                        v.*.* = og.*;
+                    } else if (@typeInfo(@TypeOf(og)) == .Struct) {
+                        v.* = (ator.create(@TypeOf(og)) catch @panic("Failed to allocate memory"));
+                        v.* = og;
+                    } else {
+                        v.* = og;
+                    }
+                }
+
+                var true_args = argss.args.shareds ++ private_copy.*;
 
                 argss.ret = call_fn(f, .{&this} ++ true_args) catch |err| err;
                 return;
