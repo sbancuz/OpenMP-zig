@@ -3,8 +3,7 @@ const std = @import("std");
 
 test "main" {
     var foo: u8 = 1;
-    _ = foo;
-    const res = try omp.parallel(tes, .{ .shareds = .{"hallow"}, .privates = .{1} }, .{ .num_threads = 8 });
+    const res = try omp.parallel(tes, .{ .shareds = .{"hallow"}, .privates = .{&foo} }, .{ .num_threads = 8 });
     if (res) |r| {
         std.debug.print("res: {any}\n", .{r});
     } else {
@@ -12,11 +11,11 @@ test "main" {
     }
 }
 
-pub fn tes(om: *omp.omp_ctx, str: []const u8, str2: u32) error{Unimplemented}!?u34 {
+pub fn tes(om: *omp.omp_ctx, str: []const u8, str2: *u8) error{Unimplemented}!?u34 {
     _ = str;
     _ = om;
-    // str2.* += 1;
-    std.debug.print("its aliveeee {} {}\n", .{ str2, str2 });
+    str2.* += 1;
+    std.debug.print("its aliveeee {} {}\n", .{ str2.*, str2 });
 
     return 1;
 }

@@ -148,20 +148,29 @@ pub const omp_ctx = struct {
                     .bound_tid = btid.*,
                 };
 
-                const allocator = std.heap.page_allocator;
-                var arena = std.heap.ArenaAllocator.init(allocator);
-                const ator = arena.allocator();
-                defer arena.deinit();
-
                 const private_type = @TypeOf(argss.args.privates);
-                var private_copy = (ator.create(private_type) catch @panic("Failed to allocate memory"));
+                const buf_size = comptime ret: {
+                    var size = @sizeOf(private_type);
+                    inline for (@typeInfo(private_type).Struct.fields) |field| {
+                        if (@typeInfo(field.type) == .Pointer) {
+                            size += @sizeOf(@typeInfo(field.type).Pointer.child);
+                        }
+                    }
+                    break :ret size;
+                };
+
+                var buffer = [_]u8{0} ** (buf_size);
+                var fb = std.heap.FixedBufferAllocator.init(&buffer);
+                const allocator = fb.allocator();
+
+                var private_copy = (allocator.create(private_type) catch @panic("Failed to allocate memory"));
 
                 inline for (argss.args.privates, private_copy) |og, *v| {
                     if (@typeInfo(@TypeOf(og)) == .Pointer) {
-                        v.* = @constCast((ator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
+                        v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
                         v.*.* = og.*;
                     } else if (@typeInfo(@TypeOf(og)) == .Struct) {
-                        v.* = (ator.create(@TypeOf(og)) catch @panic("Failed to allocate memory"));
+                        v.* = (allocator.create(@TypeOf(og)) catch @panic("Failed to allocate memory"));
                         v.* = og;
                     } else {
                         v.* = og;
