@@ -4,17 +4,18 @@ An implementation of the OpenMP directives for Zig
 ## !!! This implementation is incomplete and highly experimental
 
 To support:
+- [p] `worksharing constructs` (only shared and privates for parallel region)
 - [x] `error return types from directives`
 - [x] `early return from directives`
 - [x] `#pragma omp parallel`
-- [x] `#pragma omp for` (extremely limited for now)
+- [p] `#pragma omp for` (extremely limited for now)
 - [ ] `#pragma omp sections`
 - [ ] `#pragma omp section`
 - [x] `#pragma omp single`
 - [x] `#pragma omp master`
 - [x] `#pragma omp critical`
 - [x] `#pragma omp barrier`
-- [x] `#pragma omp task` (extremely limited for now, no dependencies)
+- [p] `#pragma omp task` (extremely limited for now, no dependencies)
 - [ ] `proper testing`
 
 ## Usage
@@ -23,7 +24,7 @@ const omp = @import("omp.zig");
 const std = @import("std");
 
 pub fn main() void {
-    const res = omp.parallel(tes, .{ "hello" }, .{ .num_threads = 8 });
+    const res = omp.parallel(tes, .{ .shared = .{ "hello" } }, .{ .num_threads = 8 });
     if (res) |r| {
         std.debug.print("res: {any}\n", .{r});
     } else {
