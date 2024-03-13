@@ -15,6 +15,8 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const omp = b.addModule("omp", .{ .source_file = .{ .path = "src/omp.zig" } });
+
     const exe = b.addStaticLibrary(.{
         .name = "omp-zig",
         // In this case the main source file is merely a path, however, in more
@@ -25,28 +27,31 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkLibC();
     exe.linkSystemLibrary("omp");
+    // exe.addModule("omp-zig", omp);
 
     b.installArtifact(exe);
-    const main = b.addExecutable(.{
-        .name = "omp-zig",
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-    main.linkLibC();
-    main.linkSystemLibrary("omp");
-    b.installArtifact(main);
+    // const main = b.addExecutable(.{
+    //     .name = "omp-zig",
+    //     // In this case the main source file is merely a path, however, in more
+    //     // complicated build scripts, this could be a generated file.
+    //     .root_source_file = .{ .path = "src/main.zig" },
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
+    // main.linkLibC();
+    // main.linkSystemLibrary("omp");
+    // b.installArtifact(main);
 
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "tests/main.zig" },
         .target = target,
         .optimize = optimize,
     });
 
     unit_tests.linkLibC();
     unit_tests.linkSystemLibrary("omp");
+
+    unit_tests.addModule("omp", omp);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

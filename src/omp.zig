@@ -62,10 +62,10 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
 
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
-        @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
-    if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp_ctx) {
-        @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+    if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
+        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
 
     var id = .{
@@ -84,9 +84,9 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
     var ret: ret_type = .{ .args = new_args };
 
     if (opts.condition) |cond| {
-        kmp.fork_call_if(&id, 1, @ptrCast(&omp_ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), @intFromBool(cond), &ret);
+        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), @intFromBool(cond), &ret);
     } else {
-        kmp.fork_call(&id, 1, @ptrCast(&omp_ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), &ret);
+        kmp.fork_call(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), &ret);
     }
 
     if (copy_ret(f) != void) {
@@ -136,7 +136,7 @@ noinline fn call_fn_no_inline(comptime f: anytype, args: anytype) copy_ret(f) {
     }
 }
 
-pub const omp_ctx = struct {
+pub const ctx = struct {
     const Self = @This();
 
     global_tid: c_int,
@@ -183,7 +183,11 @@ pub const omp_ctx = struct {
 
                 var true_args = argss.args.shareds ++ private_copy.*;
 
-                argss.ret = call_fn(f, .{&this} ++ true_args) catch |err| err;
+                if (@typeInfo(R) == .ErrorUnion) {
+                    argss.ret = call_fn(f, .{&this} ++ true_args) catch |err| err;
+                } else {
+                    argss.ret = call_fn(f, .{&this} ++ true_args);
+                }
                 return;
             }
         };
@@ -199,8 +203,8 @@ pub const omp_ctx = struct {
         if (f_type_info != .Fn) {
             @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp_ctx) {
-            @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
+            @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
         const single_id = .{
@@ -233,8 +237,8 @@ pub const omp_ctx = struct {
         if (f_type_info != .Fn) {
             @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp_ctx) {
-            @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
+            @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
         const master_id = .{
@@ -279,8 +283,8 @@ pub const omp_ctx = struct {
         if (f_type_info != .Fn) {
             @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
-        if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *omp_ctx or f_type_info.Fn.params[1].type.? != @TypeOf(T)) {
-            @compileError("Expected function with signature `fn(omp_ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *ctx or f_type_info.Fn.params[1].type.? != @TypeOf(T)) {
+            @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
         var id = .{
@@ -322,7 +326,7 @@ pub const omp_ctx = struct {
     }
 
     pub fn barrier(this: *Self) void {
-        const id = .{
+        var id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
         };
@@ -367,8 +371,8 @@ pub const omp_ctx = struct {
         if (f_type_info != .Fn) {
             @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp_ctx) {
-            @compileError("Expected function with signature `fn(omp_ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
+            @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
         const new_args = .{this} ++ args;
