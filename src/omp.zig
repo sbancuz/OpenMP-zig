@@ -98,44 +98,6 @@ inline fn copy_ret(comptime f: anytype) type {
     return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
 }
 
-inline fn call_fn(comptime f: anytype, args: anytype) copy_ret(f) {
-    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-    if (copy_ret(f) != void) {
-        if (type_info == .ErrorUnion) {
-            return try @call(.auto, f, args);
-        } else {
-            if (@call(.auto, f, args)) |ret| {
-                return ret;
-            }
-        }
-    } else {
-        if (type_info == .ErrorSet) {
-            try @call(.auto, f, args);
-        } else {
-            @call(.auto, f, args);
-        }
-    }
-}
-
-noinline fn call_fn_no_inline(comptime f: anytype, args: anytype) copy_ret(f) {
-    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-    if (copy_ret(f) != void) {
-        if (type_info == .ErrorUnion) {
-            return try @call(.auto, f, args);
-        } else {
-            if (@call(.auto, f, args)) |ret| {
-                return ret;
-            }
-        }
-    } else {
-        if (type_info == .ErrorSet) {
-            try @call(.auto, f, args);
-        } else {
-            @call(.auto, f, args);
-        }
-    }
-}
-
 pub const ctx = struct {
     const Self = @This();
 
@@ -143,8 +105,6 @@ pub const ctx = struct {
     bound_tid: c_int,
 
     fn make_outline(comptime T: type, comptime R: type, comptime f: anytype) type {
-        std.debug.assert(R == void or @typeInfo(R) == .Optional or @typeInfo(R) == .ErrorSet or @typeInfo(R) == .ErrorUnion);
-
         return opaque {
             fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
                 var this: Self = .{
@@ -184,9 +144,10 @@ pub const ctx = struct {
                 var true_args = argss.args.shareds ++ private_copy.*;
 
                 if (@typeInfo(R) == .ErrorUnion) {
-                    argss.ret = call_fn(f, .{&this} ++ true_args) catch |err| err;
+                    // TODO: why do we ignore the error?
+                    argss.ret = @call(.auto, f, .{&this} ++ true_args) catch |err| err;
                 } else {
-                    argss.ret = call_fn(f, .{&this} ++ true_args);
+                    argss.ret = @call(.auto, f, .{&this} ++ true_args);
                 }
                 return;
             }
@@ -216,15 +177,22 @@ pub const ctx = struct {
             .psource = "single" ++ @typeName(@TypeOf(f)),
         };
 
+        const res = undefined;
         if (kmp.single(&single_id, this.global_tid) == 1) {
-            try call_fn(f, .{this} ++ args);
+            const new_args = .{this} ++ args;
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+
+            if (type_info == .ErrorUnion) {
+                res = try @call(.auto, f, new_args);
+            } else {
+                res = @call(.auto, f, new_args);
+            }
+
             kmp.end_single(&single_id, this.global_tid);
         }
         kmp.barrier(&barrier_id, this.global_tid);
 
-        if (copy_ret(f) != void) {
-            return undefined;
-        }
+        return res;
     }
 
     pub fn master(this: *Self, f: anytype, args: anytype) copy_ret(f) {
@@ -247,11 +215,14 @@ pub const ctx = struct {
         };
 
         if (kmp.master(&master_id, this.global_tid) == 1) {
-            try call_fn(f, .{this} ++ args);
-        }
+            const new_args = .{this} ++ args;
 
-        if (copy_ret(f) != void) {
-            return undefined;
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            if (type_info == .ErrorUnion) {
+                return try @call(.auto, f, new_args);
+            } else {
+                return @call(.auto, f, new_args);
+            }
         }
     }
 
@@ -336,26 +307,39 @@ pub const ctx = struct {
     pub fn critical(this: *Self, f: anytype, args: anytype) copy_ret(f) {
         kmp.critical();
 
-        try call_fn(f, .{this} ++ args);
+        const new_args = .{this} ++ args;
+
+        const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+        const ret = ret: {
+            if (type_info == .ErrorUnion) {
+                break :ret try @call(.auto, f, new_args);
+            } else {
+                break :ret @call(.auto, f, new_args);
+            }
+        };
         kmp.critical_end();
 
-        if (copy_ret(f) != void) {
-            return undefined;
-        }
+        return ret;
     }
 
     fn outline(comptime f: anytype, comptime ret_type: type) type {
         return opaque {
-            // This comes from decompiling the outline with ghidra
-            // It should never really change since it's just a wrapper around the actual function
-            // and it can't inline anything even if it wanted to
-            //
-            // remember to update the size_in_release_debug if the function changes, can't really enforce it though
+            /// This comes from decompiling the outline with ghidra
+            /// It should never really change since it's just a wrapper around the actual function
+            /// and it can't inline anything even if it wanted to
+            ///
+            /// remember to update the size_in_release_debug if the function changes, can't really enforce it though
             const size_in_release_debug = 42;
             fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
                 _ = gtid;
 
-                pass.ret = call_fn_no_inline(f, pass.args);
+                // TODO: CHECK WITH GHIDRA THE NEW SIZE
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+                if (type_info == .ErrorUnion) {
+                    pass.ret = try @call(.auto, f, pass.args);
+                } else {
+                    pass.ret = @call(.auto, f, pass.args);
+                }
                 return 0;
             }
         };
