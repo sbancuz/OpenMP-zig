@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const ident_flags = enum(c_int) {
     // /*! Use trampoline for internal microtasks */
     IDENT_IMB = 0x01,
@@ -73,14 +75,22 @@ extern "C" fn __kmpc_for_static_init_4u(loc: *ident_t, gtid: c_int, schedtype: c
 extern "C" fn __kmpc_for_static_init_8(loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_long, pupper: *c_long, pstride: *c_long, incr: c_long, chunk: c_long) void;
 extern "C" fn __kmpc_for_static_init_8u(loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_ulong, pupper: *c_ulong, pstride: *c_long, incr: c_long, chunk: c_long) void;
 pub inline fn for_static_init(comptime T: type, loc: *ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *T, pupper: *T, pstride: *T, incr: T, chunk: T) void {
-    if (T == c_int) {
-        __kmpc_for_static_init_4(@constCast(loc), gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
-    } else if (T == c_uint) {
-        __kmpc_for_static_init_4u(@constCast(loc), gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
-    } else if (T == c_long) {
-        __kmpc_for_static_init_8(@constCast(loc), gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
-    } else if (T == c_ulong) {
-        __kmpc_for_static_init_8u(@constCast(loc), gtid, schedtype, plastiter, plower, pupper, pstride, @bitCast(incr), @bitCast(chunk));
+    if (std.meta.trait.isSignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            __kmpc_for_static_init_4(@constCast(loc), gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            __kmpc_for_static_init_8(@constCast(loc), gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+        } else {
+            @compileError("Unsupported integer size");
+        }
+    } else if (std.meta.trait.isUnsignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            __kmpc_for_static_init_4u(@constCast(loc), gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            __kmpc_for_static_init_8u(@constCast(loc), gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+        } else {
+            @compileError("Unsupported unsigned integer size");
+        }
     } else {
         unreachable;
     }

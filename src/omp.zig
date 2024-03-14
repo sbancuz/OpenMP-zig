@@ -262,28 +262,18 @@ pub const ctx = struct {
         }
 
         const T = comptime ret: {
-            if (std.meta.trait.isSignedInt(@TypeOf(lower))) {
-                if (@sizeOf(@TypeOf(lower)) <= 4) {
-                    break :ret c_int;
-                } else {
-                    break :ret c_long;
-                }
-            } else if (std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
-                if (@sizeOf(@TypeOf(lower)) <= 4) {
-                    break :ret c_uint;
-                } else {
-                    break :ret c_ulong;
-                }
-            } else {
-                @compileError("Tried to loop over a non-integer type " ++ @typeName(@TypeOf(lower)));
+            if (!std.meta.trait.isSignedInt(@TypeOf(lower)) and !std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
+                @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(@TypeOf(lower)));
             }
+
+            break :ret @TypeOf(lower);
         };
 
         const f_type_info = @typeInfo(@TypeOf(f));
         if (f_type_info != .Fn) {
             @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
-        if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *ctx or f_type_info.Fn.params[1].type.? != @TypeOf(T)) {
+        if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *ctx or f_type_info.Fn.params[1].type.? != T) {
             @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
@@ -297,20 +287,30 @@ pub const ctx = struct {
         var sched: c_int = @intFromEnum(opts.sched);
         var last_iter: c_int = 0;
 
-        // TOOD: Figure out how to use all of these values
+        // TODO: Figure out how to use all of these values
         var low: T = 0;
-        var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower - 1)) / increment));
+
+        // TODO: Maybe use f64 when we need more precision?
+        var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower - 1)) / @as(f32, @floatFromInt(increment))));
         var stri: T = 1;
         var incr: T = increment;
         var chunk: T = 1;
 
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
 
+        // TODO: Figure out how to pass the result
         while (@atomicRmw(T, &low, .Add, incr, .AcqRel) <= upp) {
-            try call_fn(f, .{ this, upp } ++ args);
+            const new_args = .{ this, low - 1 } ++ args;
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+
+            if (type_info == .ErrorUnion) {
+                _ = try @call(.auto, f, new_args);
+            } else {
+                _ = @call(.auto, f, new_args);
+            }
         }
 
-        const id_fini = .{
+        var id_fini = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
             .reserved_3 = 0x1b,
