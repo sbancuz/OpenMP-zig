@@ -103,6 +103,7 @@ pub const ctx = struct {
 
     global_tid: c_int,
     bound_tid: c_int,
+    locks: std.StringHashMap(kmp.critical_name_t),
 
     fn make_outline(comptime T: type, comptime R: type, comptime f: anytype) type {
         return opaque {
@@ -110,6 +111,7 @@ pub const ctx = struct {
                 var this: Self = .{
                     .global_tid = gtid.*,
                     .bound_tid = btid.*,
+                    .locks = std.StringHashMap(kmp.critical_name_t).init(std.heap.page_allocator),
                 };
 
                 const private_type = @TypeOf(argss.args.privates);
@@ -149,6 +151,7 @@ pub const ctx = struct {
                 } else {
                     argss.ret = @call(.auto, f, .{&this} ++ true_args);
                 }
+
                 return;
             }
         };
@@ -304,8 +307,21 @@ pub const ctx = struct {
         kmp.barrier(&id, this.global_tid);
     }
 
-    pub fn critical(this: *Self, f: anytype, args: anytype) copy_ret(f) {
-        kmp.critical();
+    pub fn critical(this: *Self, name: []const u8, sync: sync_hint_t, f: anytype, args: anytype) copy_ret(f) {
+        var id: kmp.ident_t = .{
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+            .psource = "barrier",
+        };
+
+        var loc: kmp.critical_name_t = this.locks.get(name) orelse l: {
+            var l: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+            this.locks.put(name, l) catch {
+                @panic("Failed to allocate memory for lock");
+            };
+            break :l l;
+        };
+
+        kmp.critical(&id, this.global_tid, &loc, @intFromEnum(sync));
 
         const new_args = .{this} ++ args;
 
@@ -317,7 +333,7 @@ pub const ctx = struct {
                 break :ret @call(.auto, f, new_args);
             }
         };
-        kmp.critical_end();
+        kmp.critical_end(&id, this.global_tid, &loc);
 
         return ret;
     }

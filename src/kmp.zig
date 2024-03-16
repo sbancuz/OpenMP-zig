@@ -57,7 +57,6 @@ pub const ident_t = extern struct {
     psource: [*:0]const u8,
 };
 
-pub const critical_name_t = [8]c_int;
 pub const kmpc_micro_t = fn (global_tid: *c_int, bound_tid: *c_int, args: *align(@alignOf(usize)) anyopaque) callconv(.C) void;
 
 extern "C" fn __kmpc_fork_call(name: *ident_t, argc: c_int, fun: *const kmpc_micro_t, ...) void;
@@ -136,16 +135,15 @@ pub inline fn push_num_threads(name: *ident_t, global_tid: c_int, num_threads: c
     __kmpc_push_num_threads(@constCast(name), global_tid, num_threads);
 }
 
-// Maybe figure out how to use the clang API, but since this GOMP is supported by clang we can just use it
-// This is "needed" because it's an API that doesn't need to use the name for which i don't know the rules to it
-extern "C" fn GOMP_critical_start() void;
-pub inline fn critical() void {
-    GOMP_critical_start();
+pub const critical_name_t = [8]c_int; // This seems to be just a lock, so I give up on ever using it
+extern "C" fn __kmpc_critical_with_hint(loc: *ident_t, global_tid: c_int, crit: *critical_name_t, hint: c_int) void;
+pub inline fn critical(loc: *ident_t, global_tid: c_int, crit: *critical_name_t, hint: c_int) void {
+    __kmpc_critical_with_hint(loc, global_tid, crit, hint);
 }
 
-extern "C" fn GOMP_critical_end() void;
-pub inline fn critical_end() void {
-    GOMP_critical_end();
+extern "C" fn __kmpc_end_critical(loc: *ident_t, global_tid: c_int, crit: *critical_name_t) void;
+pub inline fn critical_end(loc: *ident_t, global_tid: c_int, crit: *critical_name_t) void {
+    __kmpc_end_critical(loc, global_tid, crit);
 }
 
 // Todo: invert for big endian
