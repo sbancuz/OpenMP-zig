@@ -217,7 +217,7 @@ pub const ctx = struct {
             @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
-        const master_id = .{
+        var master_id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "master" ++ @typeName(@TypeOf(f)),
         };
