@@ -264,13 +264,15 @@ pub const ctx = struct {
         // TODO: Don't know what will happen with other schedules
         std.debug.assert(opts.sched == kmp.sched_t.StaticNonChunked);
         var sched: c_int = @intFromEnum(opts.sched);
+
+        // This is `1` iside the last thread execution
         var last_iter: c_int = 0;
 
         // TODO: Figure out how to use all of these values
-        var low: T = 0;
+        var low: T = lower;
 
         // TODO: Maybe use f64 when we need more precision?
-        var upp: T = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(upper - lower - 1)) / @as(f32, @floatFromInt(increment))));
+        var upp: T = upper - 1;
         var stri: T = 1;
         var incr: T = increment;
         var chunk: T = 1;
@@ -278,8 +280,13 @@ pub const ctx = struct {
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
 
         // TODO: Figure out how to pass the result
-        while (@atomicRmw(T, &low, .Add, incr, .AcqRel) <= upp) {
-            const new_args = .{ this, low - 1 } ++ args;
+        while (true) {
+            const i = @atomicRmw(T, &low, .Add, incr, .AcqRel);
+            if (upp < i) {
+                break;
+            }
+
+            const new_args = .{ this, i } ++ args;
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
             if (type_info == .ErrorUnion) {

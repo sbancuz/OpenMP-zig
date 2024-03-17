@@ -41,9 +41,12 @@ test "critical" {
 
 fn omp_critical_hint(iter: u32) bool {
     var sum: u32 = 0;
-    const known_sum: u32 = 999 * 1000 / 2;
+    const known_sum: u32 = (999 * 1000) / 2;
 
     omp.parallel(parallel_sum_hint, .{ .shareds = .{ &sum, iter } }, .{});
+    if (sum != known_sum) {
+        std.debug.print("sum: {}, known_sum: {}\n", .{ sum, known_sum });
+    }
 
     return known_sum == sum;
 }

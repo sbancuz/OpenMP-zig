@@ -20,7 +20,7 @@ fn test_omp_parallel_default() !bool {
 }
 
 fn parallel_default_para(p: *omp.ctx, sum: *u32, mysum: *u32) void {
-    p.parallel_for(parallel_default_for, .{mysum}, @as(u32, 0), @as(u32, @intCast(params.loop_count + 1)), @as(u32, 1), .{});
+    p.parallel_for(parallel_default_for, .{mysum}, @as(u32, 1), @as(u32, @intCast(params.loop_count + 1)), @as(u32, 1), .{});
 
     omp.critical("para")(p, .none, critical_para, .{ sum, mysum.* });
 }
@@ -130,3 +130,49 @@ test "parallel_nested" {
 
     try std.testing.expect(num_failed == 0);
 }
+//
+// fn test_omp_parallel_private() !bool {
+//     var sum: u32 = 0;
+//     var num_threads: u32 = 0;
+//     var sum1: u32 = 0;
+//
+//     omp.parallel(parallel_private_para, .{ .shareds = .{ &sum, &num_threads }, .privates = .{&sum1} }, .{});
+//
+//     const known_sum: u32 = ((999 * 1000) / 2) + (7 * num_threads);
+//     if (known_sum != sum) {
+//         std.debug.print("NUM_THREADS = {}\n", .{num_threads});
+//         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
+//         std.debug.print("SUM = {}\n", .{sum});
+//     }
+//     return known_sum == sum;
+// }
+//
+// fn parallel_private_para(p: *omp.ctx, sum: *u32, num_threads: *u32, sum1: *u32) void {
+//     sum1.* = 7;
+//
+//     p.parallel_for(parallel_for_private, .{sum1}, @as(u32, 1), @as(u32, 1000), @as(u32, 1), .{});
+//
+//     omp.critical("para")(p, .none, critical_private, .{ sum, num_threads, sum1.* });
+// }
+//
+// fn parallel_for_private(p: *omp.ctx, i: u32, sum1: *u32) void {
+//     _ = p;
+//     sum1.* += i;
+// }
+//
+// fn critical_private(p: *omp.ctx, sum: *u32, num_threads: *u32, sum1: u32) void {
+//     _ = p;
+//     sum.* += sum1;
+//     num_threads.* += 1;
+// }
+//
+// test "parallel_private" {
+//     var num_failed: u32 = 0;
+//     for (0..params.repetitions) |_| {
+//         if (!try test_omp_parallel_private()) {
+//             num_failed += 1;
+//         }
+//     }
+//
+//     try std.testing.expect(num_failed == 0);
+// }
