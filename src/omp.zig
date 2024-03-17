@@ -94,6 +94,13 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
     }
 }
 
+/// Do not touch this function, each name has to be associated with a unique static lock,
+/// so we leverage comptime to generate a function with a static variable that is unique to the name
+pub fn critical(comptime name: []const u8) @TypeOf(ctx.critical) {
+    _ = name;
+    return ctx.critical;
+}
+
 inline fn copy_ret(comptime f: anytype) type {
     return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
 }
@@ -103,7 +110,6 @@ pub const ctx = struct {
 
     global_tid: c_int,
     bound_tid: c_int,
-    locks: std.StringHashMap(kmp.critical_name_t),
 
     fn make_outline(comptime T: type, comptime R: type, comptime f: anytype) type {
         return opaque {
@@ -111,7 +117,6 @@ pub const ctx = struct {
                 var this: Self = .{
                     .global_tid = gtid.*,
                     .bound_tid = btid.*,
-                    .locks = std.StringHashMap(kmp.critical_name_t).init(std.heap.page_allocator),
                 };
 
                 const private_type = @TypeOf(argss.args.privates);
@@ -307,21 +312,17 @@ pub const ctx = struct {
         kmp.barrier(&id, this.global_tid);
     }
 
-    pub fn critical(this: *Self, name: []const u8, sync: sync_hint_t, f: anytype, args: anytype) copy_ret(f) {
+    fn critical(this: *Self, sync: sync_hint_t, f: anytype, args: anytype) copy_ret(f) {
         var id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
         };
 
-        var loc: kmp.critical_name_t = this.locks.get(name) orelse l: {
-            var l: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-            this.locks.put(name, l) catch {
-                @panic("Failed to allocate memory for lock");
-            };
-            break :l l;
+        const static = struct {
+            var lock: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
         };
 
-        kmp.critical(&id, this.global_tid, &loc, @intFromEnum(sync));
+        kmp.critical(&id, this.global_tid, &static.lock, @intFromEnum(sync));
 
         const new_args = .{this} ++ args;
 
@@ -333,7 +334,7 @@ pub const ctx = struct {
                 break :ret @call(.auto, f, new_args);
             }
         };
-        kmp.critical_end(&id, this.global_tid, &loc);
+        kmp.critical_end(&id, this.global_tid, &static.lock);
 
         return ret;
     }
