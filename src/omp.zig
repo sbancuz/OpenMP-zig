@@ -411,7 +411,7 @@ pub const sched_t = enum(c_int) {
 
 /// Setters
 pub inline fn set_num_threads(num_threads: u32) void {
-    c.omp_set_num_threads(num_threads);
+    c.omp_set_num_threads(@intCast(num_threads));
 }
 
 pub inline fn set_dynamic(dynamic_threads: bool) void {
@@ -423,7 +423,7 @@ pub inline fn set_nested(nested: bool) void {
 }
 
 pub inline fn set_max_active_levels(max_levels: u32) void {
-    c.omp_set_max_active_levels(max_levels);
+    c.omp_set_max_active_levels(@intCast(max_levels));
 }
 
 extern "c" fn omp_set_schedule(kind: sched_t, chunk_size: c_int) void;
