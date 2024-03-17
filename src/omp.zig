@@ -248,7 +248,7 @@ pub const ctx = struct {
             @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
         if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *ctx or f_type_info.Fn.params[1].type.? != T) {
-            @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+            @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
         }
 
         var id = .{
