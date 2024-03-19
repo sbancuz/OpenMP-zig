@@ -19,16 +19,16 @@ fn check_args(args: anytype) void {
     const args_type_info = @typeInfo(@TypeOf(args));
 
     if (args_type_info != .Struct) {
-        @compileError("Expected struct like .{ .shareds = .{...}, .privates = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
+        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
     }
 
     const param_count: u32 = comptime brk: {
         var param_count: u32 = 0;
-        if (std.meta.trait.hasField("shareds")(args_type)) {
+        if (std.meta.trait.hasField("shared")(args_type)) {
             param_count += 1;
         }
 
-        if (std.meta.trait.hasField("privates")(args_type)) {
+        if (std.meta.trait.hasField("private")(args_type)) {
             param_count += 1;
         }
 
@@ -36,7 +36,7 @@ fn check_args(args: anytype) void {
     };
 
     if (param_count != args_type_info.Struct.fields.len) {
-        @compileError("b Expected struct like .{ .shareds = .{...}, .privates = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
+        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
     }
 }
 
@@ -44,21 +44,21 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
     check_args(args);
     const args_type = @TypeOf(args);
 
-    const shareds = val: {
-        if (comptime std.meta.trait.hasField("shareds")(args_type)) {
-            break :val args.shareds;
+    const shared = val: {
+        if (comptime std.meta.trait.hasField("shared")(args_type)) {
+            break :val args.shared;
         }
         break :val .{};
     };
 
-    const privates = val: {
-        if (comptime std.meta.trait.hasField("privates")(args_type)) {
-            break :val args.privates;
+    const private = val: {
+        if (comptime std.meta.trait.hasField("private")(args_type)) {
+            break :val args.private;
         }
         break :val .{};
     };
 
-    const new_args = .{ .shareds = shareds, .privates = privates };
+    const new_args = .{ .shared = shared, .private = private };
 
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
@@ -119,7 +119,7 @@ pub const ctx = struct {
                     .bound_tid = btid.*,
                 };
 
-                const private_type = @TypeOf(argss.args.privates);
+                const private_type = @TypeOf(argss.args.private);
                 const buf_size = comptime ret: {
                     var size = @sizeOf(private_type);
                     inline for (@typeInfo(private_type).Struct.fields) |field| {
@@ -136,7 +136,7 @@ pub const ctx = struct {
 
                 var private_copy = (allocator.create(private_type) catch @panic("Failed to allocate memory"));
 
-                inline for (argss.args.privates, private_copy) |og, *v| {
+                inline for (argss.args.private, private_copy) |og, *v| {
                     if (@typeInfo(@TypeOf(og)) == .Pointer) {
                         v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
                         v.*.* = og.*;
@@ -148,7 +148,7 @@ pub const ctx = struct {
                     }
                 }
 
-                var true_args = argss.args.shareds ++ private_copy.*;
+                var true_args = argss.args.shared ++ private_copy.*;
 
                 if (@typeInfo(R) == .ErrorUnion) {
                     // TODO: why do we ignore the error?
@@ -277,7 +277,9 @@ pub const ctx = struct {
         var incr: T = increment;
         var chunk: T = 1;
 
+        // std.debug.print("upp: {}\n", .{upp});
         kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
+        // std.debug.print("upp: {}, low: {}, last_iter: {}\n", .{ upp, low, last_iter });
 
         // TODO: Figure out how to pass the result
         while (true) {
@@ -285,6 +287,7 @@ pub const ctx = struct {
             if (upp < i) {
                 break;
             }
+            // std.debug.print("upp: {}, i: {}, last_iter: {}, stride: {}\n", .{ upp, i, last_iter, stri });
 
             const new_args = .{ this, i } ++ args;
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
@@ -392,7 +395,7 @@ pub const ctx = struct {
         const task_outline = outline(f, ret_type);
 
         var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, task_outline.size_in_release_debug, 0, task_outline.task);
-        t.shareds = @constCast(@ptrCast(&ret));
+        t.shared = @constCast(@ptrCast(&ret));
         _ = kmp.task(&id, this.global_tid, t);
 
         if (copy_ret(f) != void) {

@@ -7,7 +7,7 @@ fn test_omp_master() bool {
     var executing_thread: i32 = -1;
     var tid_result: u32 = 0;
 
-    omp.parallel(parallel_master, .{ .shareds = .{ &nthreads, &executing_thread, &tid_result } }, .{});
+    omp.parallel(parallel_master, .{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, .{});
     return (nthreads == 1) and (executing_thread == 0) and (tid_result == 0);
 }
 

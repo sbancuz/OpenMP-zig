@@ -5,6 +5,6 @@ pub const critical = @import("critical.zig");
 pub const parallel = @import("parallel.zig");
 pub const single = @import("master.zig");
 
-test "barrier" {
+test "all" {
     std.testing.refAllDecls(@This());
 }

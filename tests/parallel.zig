@@ -7,7 +7,7 @@ fn test_omp_parallel_default() !bool {
     var mysum: u32 = 0;
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
-    omp.parallel(parallel_default_para, .{ .shareds = .{&sum}, .privates = .{&mysum} }, .{});
+    omp.parallel(parallel_default_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{});
 
     if (known_sum != sum) {
         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
@@ -52,7 +52,7 @@ fn test_omp_parallel_if() !bool {
     const control: u32 = 1;
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
-    omp.parallel(parallel_if_para, .{ .shareds = .{&sum}, .privates = .{&mysum} }, .{ .condition = control == 0 });
+    omp.parallel(parallel_if_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{ .condition = control == 0 });
 
     if (known_sum != sum) {
         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
@@ -95,7 +95,7 @@ fn test_omp_parallel_nested() !bool {
     omp.set_nested(true);
     omp.set_max_active_levels(omp.get_max_active_levels());
 
-    omp.parallel(parallel_nested_para, .{ .shareds = .{&counter} }, .{});
+    omp.parallel(parallel_nested_para, .{ .shared = .{&counter} }, .{});
 
     return counter != 0;
 }
@@ -103,7 +103,7 @@ fn test_omp_parallel_nested() !bool {
 fn parallel_nested_para(p: *omp.ctx, counter: *i32) void {
     omp.critical("nested")(p, .none, critical_nested_plus, .{counter});
 
-    omp.parallel(parallel_nested_para_nest, .{ .shareds = .{counter} }, .{});
+    omp.parallel(parallel_nested_para_nest, .{ .shared = .{counter} }, .{});
 }
 
 fn critical_nested_plus(p: *omp.ctx, counter: *i32) void {
@@ -136,7 +136,7 @@ test "parallel_nested" {
 //     var num_threads: u32 = 0;
 //     var sum1: u32 = 0;
 //
-//     omp.parallel(parallel_private_para, .{ .shareds = .{ &sum, &num_threads }, .privates = .{&sum1} }, .{});
+//     omp.parallel(parallel_private_para, .{ .shared = .{ &sum, &num_threads }, .private = .{&sum1} }, .{});
 //
 //     const known_sum: u32 = ((999 * 1000) / 2) + (7 * num_threads);
 //     if (known_sum != sum) {

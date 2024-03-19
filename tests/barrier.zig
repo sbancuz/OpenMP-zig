@@ -19,7 +19,7 @@ fn test_omp_barrier() bool {
     var result1: u32 = 0;
     var result2: u32 = 0;
 
-    omp.parallel(parallel_fn, .{ .shareds = .{ &result1, &result2 } }, .{});
+    omp.parallel(parallel_fn, .{ .shared = .{ &result1, &result2 } }, .{});
 
     return result1 == 3;
 }
