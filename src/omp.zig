@@ -68,7 +68,7 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
         @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
 
-    var id = .{
+    const id = .{
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "parallel" ++ @typeName(@TypeOf(f)),
     };
@@ -162,7 +162,7 @@ pub const ctx = struct {
         };
     }
 
-    pub fn single(this: *Self, f: anytype, args: anytype) copy_ret(f) {
+    pub fn single(this: *Self, comptime f: anytype, args: anytype) copy_ret(f) {
         const args_type_info = @typeInfo(@TypeOf(args));
         if (args_type_info != .Struct) {
             @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
@@ -203,7 +203,7 @@ pub const ctx = struct {
         return res;
     }
 
-    pub fn master(this: *Self, f: anytype, args: anytype) copy_ret(f) {
+    pub fn master(this: *Self, comptime f: anytype, args: anytype) copy_ret(f) {
         const args_type_info = @typeInfo(@TypeOf(args));
         if (args_type_info != .Struct) {
             @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
@@ -217,7 +217,7 @@ pub const ctx = struct {
             @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
         }
 
-        var master_id = .{
+        const master_id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "master" ++ @typeName(@TypeOf(f)),
         };
@@ -234,7 +234,7 @@ pub const ctx = struct {
         }
     }
 
-    pub fn parallel_for(this: *Self, f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) copy_ret(f) {
+    pub fn parallel_for(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) copy_ret(f) {
         const args_type_info = @typeInfo(@TypeOf(args));
         if (args_type_info != .Struct) {
             @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
@@ -256,7 +256,7 @@ pub const ctx = struct {
             @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
         }
 
-        var id = .{
+        const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
         };
@@ -299,7 +299,7 @@ pub const ctx = struct {
             }
         }
 
-        var id_fini = .{
+        const id_fini = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
             .reserved_3 = 0x1b,
@@ -315,15 +315,15 @@ pub const ctx = struct {
     }
 
     pub fn barrier(this: *Self) void {
-        var id: kmp.ident_t = .{
+        const id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
         };
         kmp.barrier(&id, this.global_tid);
     }
 
-    fn critical(this: *Self, sync: sync_hint_t, f: anytype, args: anytype) copy_ret(f) {
-        var id: kmp.ident_t = .{
+    fn critical(this: *Self, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) copy_ret(f) {
+        const id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
         };
@@ -372,8 +372,8 @@ pub const ctx = struct {
         };
     }
 
-    pub fn task(this: *Self, f: anytype, args: anytype) copy_ret(f) {
-        var id = .{
+    pub fn task(this: *Self, comptime f: anytype, args: anytype) copy_ret(f) {
+        const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "task" ++ @typeName(@TypeOf(f)),
         };
