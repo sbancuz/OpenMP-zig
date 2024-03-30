@@ -229,3 +229,118 @@ pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int) c_int {
 // pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int, end_part: c_int) c_int {
 //     return __kmpc_omp_taskyield(name, gtid, end_part);
 // }
+
+pub const reduction_operators = enum(c_int) {
+    plus = 0,
+    mult = 1,
+    minus = 2,
+    bitwise_and = 3,
+    bitwise_or = 4,
+    bitwise_xor = 5,
+    logical_and = 6,
+    logical_or = 7,
+    max = 8,
+    min = 9,
+};
+
+fn create_reduce(
+    comptime types: []const std.builtin.Type.StructField,
+    comptime reduce_operators: []const reduction_operators,
+) type {
+    if (types.len != reduce_operators.len) {
+        @compileError("The number of types and operators must match");
+    }
+
+    return struct {
+        lck: critical_name_t = @bitCast([_]u8{0} ** 32),
+        fn f(lhs: *anyopaque, rhs: *anyopaque) callconv(.C) void {
+            inline for (reduce_operators, types) |op, T| {
+                switch (op) {
+                    .plus => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* += @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .mult => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* *= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .minus => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* -= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .bitwise_and => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* &= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .bitwise_or => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* |= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .bitwise_xor => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* ^= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .logical_and => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* = l.* and @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    .logical_or => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.* = l.* or @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
+                    },
+                    // TODO: Use builtins
+                    .max => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        var r = @as(*T.type, @ptrCast(@alignCast(rhs))).*;
+                        if (l.* < r.*) {
+                            l.* = r.*;
+                        }
+                    },
+                    .min => {
+                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        var r = @as(*T.type, @ptrCast(@alignCast(rhs))).*;
+                        if (l.* > r.*) {
+                            l.* = r.*;
+                        }
+                    },
+                }
+            }
+        }
+    };
+}
+
+fn foo(comptime T: type) type {
+    _ = T;
+    return struct {
+        lck: critical_name_t,
+    };
+}
+
+extern "C" fn __kmpc_reduce_nowait(
+    loc: *const ident_t,
+    global_tid: c_int,
+    num_vars: c_int,
+    reduce_size: usize,
+    reduce_data: *anyopaque,
+    reduce_func: *const fn (*anyopaque, *anyopaque) callconv(.C) void,
+    lck: *critical_name_t,
+) c_int;
+/// This call il synchronized and will only occur in the main thread, so we don't need to worry about the reduce_func being called concurrently or use atomics
+pub inline fn reduce_nowait(
+    comptime types: []const std.builtin.Type.StructField,
+    comptime loc: *const ident_t,
+    global_tid: c_int,
+    num_vars: c_int,
+    reduce_size: usize,
+    reduce_data: *anyopaque,
+    comptime reduce_operators: []const reduction_operators,
+    lck: *critical_name_t,
+) c_int {
+    const reduce_t = create_reduce(types, reduce_operators);
+    return __kmpc_reduce_nowait(loc, global_tid, num_vars, reduce_size, reduce_data, reduce_t.f, lck);
+}
+
+extern "C" fn __kmpc_end_reduce_nowait(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
+pub inline fn end_reduce_nowait(comptime loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void {
+    __kmpc_end_reduce_nowait(loc, global_tid, lck);
+}

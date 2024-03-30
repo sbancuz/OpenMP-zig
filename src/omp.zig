@@ -5,11 +5,6 @@ const c = @cImport({
     @cInclude("omp-tools.h");
 });
 
-pub const parallel_opts = struct {
-    num_threads: ?c_int = undefined,
-    condition: ?bool = undefined,
-};
-
 pub const parallel_for_opts = struct {
     sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
 };
@@ -19,7 +14,7 @@ fn check_args(args: anytype) void {
     const args_type_info = @typeInfo(@TypeOf(args));
 
     if (args_type_info != .Struct) {
-        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
+        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} .reduction = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
     }
 
     const param_count: u32 = comptime brk: {
@@ -32,15 +27,29 @@ fn check_args(args: anytype) void {
             param_count += 1;
         }
 
+        if (std.meta.trait.hasField("reduction")(args_type)) {
+            param_count += 1;
+        }
+
         break :brk param_count;
     };
 
     if (param_count != args_type_info.Struct.fields.len) {
-        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
+        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} .reduction = {...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
     }
 }
 
-pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_ret(f) {
+pub const reduction_operators = kmp.reduction_operators;
+
+pub const parallel_opts = struct {
+    num_threads: ?c_int = undefined,
+    condition: ?bool = undefined,
+};
+
+pub const comptime_parallel_opts = struct {
+    reduction: []const reduction_operators = &[0]reduction_operators{},
+};
+pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) copy_ret(f) {
     check_args(args);
     const args_type = @TypeOf(args);
 
@@ -58,7 +67,14 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
         break :val .{};
     };
 
-    const new_args = .{ .shared = shared, .private = private };
+    const reduction = val: {
+        if (comptime std.meta.trait.hasField("reduction")(args_type)) {
+            break :val args.reduction;
+        }
+        break :val .{};
+    };
+
+    const new_args = .{ .shared = shared, .private = private, .reduction = reduction };
 
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
@@ -84,9 +100,9 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts) copy_re
     var ret: ret_type = .{ .args = new_args };
 
     if (opts.condition) |cond| {
-        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), @intFromBool(cond), &ret);
+        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f, copts.reduction).outline), @intFromBool(cond), &ret);
     } else {
-        kmp.fork_call(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f).outline), &ret);
+        kmp.fork_call(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f, copts.reduction).outline), &ret);
     }
 
     if (copy_ret(f) != void) {
@@ -111,7 +127,7 @@ pub const ctx = struct {
     global_tid: c_int,
     bound_tid: c_int,
 
-    fn make_outline(comptime T: type, comptime R: type, comptime f: anytype) type {
+    fn make_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
         return opaque {
             fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
                 var this: Self = .{
@@ -120,7 +136,7 @@ pub const ctx = struct {
                 };
 
                 const private_type = @TypeOf(argss.args.private);
-                const buf_size = comptime ret: {
+                const pri_buf_size = comptime ret: {
                     var size = @sizeOf(private_type);
                     inline for (@typeInfo(private_type).Struct.fields) |field| {
                         if (@typeInfo(field.type) == .Pointer) {
@@ -130,11 +146,23 @@ pub const ctx = struct {
                     break :ret size;
                 };
 
-                var buffer = [_]u8{0} ** (buf_size);
+                const reduction_type = @TypeOf(argss.args.reduction);
+                const red_buf_size = comptime ret: {
+                    var size = @sizeOf(reduction_type);
+                    inline for (@typeInfo(reduction_type).Struct.fields) |field| {
+                        if (@typeInfo(field.type) == .Pointer) {
+                            size += @sizeOf(@typeInfo(field.type).Pointer.child);
+                        }
+                    }
+                    break :ret size;
+                };
+
+                var buffer = [_]u8{0} ** (pri_buf_size + red_buf_size);
                 var fb = std.heap.FixedBufferAllocator.init(&buffer);
                 const allocator = fb.allocator();
 
                 var private_copy = (allocator.create(private_type) catch @panic("Failed to allocate memory"));
+                var reduction_copy = (allocator.create(reduction_type) catch @panic("Failed to allocate memory"));
 
                 inline for (argss.args.private, private_copy) |og, *v| {
                     if (@typeInfo(@TypeOf(og)) == .Pointer) {
@@ -148,13 +176,47 @@ pub const ctx = struct {
                     }
                 }
 
-                var true_args = argss.args.shared ++ private_copy.*;
+                inline for (argss.args.reduction, reduction_copy) |og, *v| {
+                    if (@typeInfo(@TypeOf(og)) == .Pointer) {
+                        v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
+                        v.*.* = og.*;
+                    } else if (@typeInfo(@TypeOf(og)) == .Struct) {
+                        @compileError("Structs are not supported in reductions");
+                    } else {
+                        v.* = og;
+                    }
+                }
+
+                var true_args = argss.args.shared ++ private_copy.* ++ reduction_copy.*;
 
                 if (@typeInfo(R) == .ErrorUnion) {
-                    // TODO: why do we ignore the error?
                     argss.ret = @call(.auto, f, .{&this} ++ true_args) catch |err| err;
                 } else {
                     argss.ret = @call(.auto, f, .{&this} ++ true_args);
+                }
+
+                if (red_opts.len > 0) {
+                    const id = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "reduction" ++ @typeName(@TypeOf(argss.args.reduction)),
+                    };
+                    var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+
+                    const res = kmp.reduce_nowait(@typeInfo(reduction_type).Struct.fields, &id, this.global_tid, argss.args.reduction.len, @sizeOf(reduction_type), reduction_copy, red_opts, &lck);
+                    if (res == 2) {
+                        @panic("Atomic reduce not implemented");
+                    }
+
+                    if (res == 1) {
+                        kmp.end_reduce_nowait(&id, this.global_tid, &lck);
+                        inline for (argss.args.reduction, reduction_copy) |og, *v| {
+                            if (@typeInfo(@TypeOf(og)) == .Pointer) {
+                                og.* = v.*.*;
+                            } else {
+                                og = v.*;
+                            }
+                        }
+                    }
                 }
 
                 return;
