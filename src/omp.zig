@@ -5,39 +5,11 @@ const c = @cImport({
     @cInclude("omp-tools.h");
 });
 
+const in = @import("input_handler.zig");
+
 pub const parallel_for_opts = struct {
     sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
 };
-
-fn check_args(args: anytype) void {
-    const args_type = @TypeOf(args);
-    const args_type_info = @typeInfo(@TypeOf(args));
-
-    if (args_type_info != .Struct) {
-        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} .reduction = .{...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
-    }
-
-    const param_count: u32 = comptime brk: {
-        var param_count: u32 = 0;
-        if (std.meta.trait.hasField("shared")(args_type)) {
-            param_count += 1;
-        }
-
-        if (std.meta.trait.hasField("private")(args_type)) {
-            param_count += 1;
-        }
-
-        if (std.meta.trait.hasField("reduction")(args_type)) {
-            param_count += 1;
-        }
-
-        break :brk param_count;
-    };
-
-    if (param_count != args_type_info.Struct.fields.len) {
-        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} .reduction = {...} }, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
-    }
-}
 
 pub const reduction_operators = kmp.reduction_operators;
 
@@ -50,31 +22,7 @@ pub const comptime_parallel_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
 };
 pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) copy_ret(f) {
-    check_args(args);
-    const args_type = @TypeOf(args);
-
-    const shared = val: {
-        if (comptime std.meta.trait.hasField("shared")(args_type)) {
-            break :val args.shared;
-        }
-        break :val .{};
-    };
-
-    const private = val: {
-        if (comptime std.meta.trait.hasField("private")(args_type)) {
-            break :val args.private;
-        }
-        break :val .{};
-    };
-
-    const reduction = val: {
-        if (comptime std.meta.trait.hasField("reduction")(args_type)) {
-            break :val args.reduction;
-        }
-        break :val .{};
-    };
-
-    const new_args = .{ .shared = shared, .private = private, .reduction = reduction };
+    const new_args = in.normalize_args(args);
 
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
