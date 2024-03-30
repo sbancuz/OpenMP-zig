@@ -42,9 +42,9 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptim
     var ret: ret_type = .{ .args = new_args };
 
     if (opts.condition) |cond| {
-        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), @intFromBool(cond), &ret);
+        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.parallel_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), @intFromBool(cond), &ret);
     } else {
-        kmp.fork_call(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), &ret);
+        kmp.fork_call(&id, 1, @ptrCast(&ctx.parallel_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), &ret);
     }
 
     if (in.copy_ret(f) != void) {
@@ -65,7 +65,7 @@ pub const ctx = struct {
     global_tid: c_int,
     bound_tid: c_int,
 
-    fn make_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
+    fn parallel_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
         const args_type = @typeInfo(T).Struct.fields[1].type;
         const private_type = @typeInfo(args_type).Struct.fields[1].type;
         const pri_buf_size = comptime in.deep_size_of(private_type);
@@ -299,7 +299,7 @@ pub const ctx = struct {
         return ret;
     }
 
-    fn outline(comptime f: anytype, comptime ret_type: type) type {
+    fn task_outline(comptime f: anytype, comptime ret_type: type) type {
         return opaque {
             /// This comes from decompiling the outline with ghidra
             /// It should never really change since it's just a wrapper around the actual function
@@ -339,9 +339,9 @@ pub const ctx = struct {
             args: @TypeOf(new_args),
         };
         const ret: ret_type = .{ .ret = undefined, .args = new_args };
-        const task_outline = outline(f, ret_type);
+        const outline = task_outline(f, ret_type);
 
-        var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, task_outline.size_in_release_debug, 0, task_outline.task);
+        var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, outline.size_in_release_debug, 0, outline.task);
         t.shared = @constCast(@ptrCast(&ret));
         _ = kmp.task(&id, this.global_tid, t);
 
