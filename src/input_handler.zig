@@ -85,7 +85,7 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
 }
 
 // TODO: Remove the need for the `ctx` argument, maybe the user doesn't want to use it
-fn check_fn_signature(comptime f: anytype) bool {
+pub fn check_fn_signature(comptime f: anytype) bool {
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
         @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
@@ -93,8 +93,43 @@ fn check_fn_signature(comptime f: anytype) bool {
     if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp.ctx) {
         @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
+
+    return true;
+}
+
+pub fn check_args(comptime T: type) void {
+    const args_type_info = @typeInfo(T);
+    if (args_type_info != .Struct) {
+        @compileError("Expected struct or tuple, got " ++ @typeName(T) ++ " instead.");
+    }
 }
 
 pub fn copy_ret(comptime f: anytype) type {
     return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
+}
+
+pub fn deep_size_of(comptime T: type) usize {
+    var size: usize = @sizeOf(T);
+    inline for (@typeInfo(T).Struct.fields) |field| {
+        if (@typeInfo(field.type) == .Pointer) {
+            size += @sizeOf(@typeInfo(field.type).Pointer.child);
+        }
+    }
+    return size;
+}
+
+pub fn deep_copy(comptime T: type, allocator: std.mem.Allocator, original: T) *T {
+    var copy = (allocator.create(T) catch @panic("Failed to allocate memory"));
+    inline for (original, copy) |og, *v| {
+        if (@typeInfo(@TypeOf(og)) == .Pointer) {
+            v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
+            v.*.* = og.*;
+        } else if (@typeInfo(@TypeOf(og)) == .Struct) {
+            v.* = (allocator.create(@TypeOf(og)) catch @panic("Failed to allocate memory"));
+            v.* = og;
+        } else {
+            v.* = og;
+        }
+    }
+    return copy;
 }

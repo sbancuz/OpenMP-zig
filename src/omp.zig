@@ -66,6 +66,13 @@ pub const ctx = struct {
     bound_tid: c_int,
 
     fn make_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
+        const args_type = @typeInfo(T).Struct.fields[1].type;
+        const private_type = @typeInfo(args_type).Struct.fields[1].type;
+        const pri_buf_size = comptime in.deep_size_of(private_type);
+
+        const reduction_type = @typeInfo(args_type).Struct.fields[2].type;
+        const red_buf_size = comptime in.deep_size_of(reduction_type);
+
         return opaque {
             fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
                 var this: Self = .{
@@ -73,58 +80,12 @@ pub const ctx = struct {
                     .bound_tid = btid.*,
                 };
 
-                const private_type = @TypeOf(argss.args.private);
-                const pri_buf_size = comptime ret: {
-                    var size = @sizeOf(private_type);
-                    inline for (@typeInfo(private_type).Struct.fields) |field| {
-                        if (@typeInfo(field.type) == .Pointer) {
-                            size += @sizeOf(@typeInfo(field.type).Pointer.child);
-                        }
-                    }
-                    break :ret size;
-                };
-
-                const reduction_type = @TypeOf(argss.args.reduction);
-                const red_buf_size = comptime ret: {
-                    var size = @sizeOf(reduction_type);
-                    inline for (@typeInfo(reduction_type).Struct.fields) |field| {
-                        if (@typeInfo(field.type) == .Pointer) {
-                            size += @sizeOf(@typeInfo(field.type).Pointer.child);
-                        }
-                    }
-                    break :ret size;
-                };
-
                 var buffer = [_]u8{0} ** (pri_buf_size + red_buf_size);
                 var fb = std.heap.FixedBufferAllocator.init(&buffer);
                 const allocator = fb.allocator();
 
-                var private_copy = (allocator.create(private_type) catch @panic("Failed to allocate memory"));
-                var reduction_copy = (allocator.create(reduction_type) catch @panic("Failed to allocate memory"));
-
-                inline for (argss.args.private, private_copy) |og, *v| {
-                    if (@typeInfo(@TypeOf(og)) == .Pointer) {
-                        v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
-                        v.*.* = og.*;
-                    } else if (@typeInfo(@TypeOf(og)) == .Struct) {
-                        v.* = (allocator.create(@TypeOf(og)) catch @panic("Failed to allocate memory"));
-                        v.* = og;
-                    } else {
-                        v.* = og;
-                    }
-                }
-
-                inline for (argss.args.reduction, reduction_copy) |og, *v| {
-                    if (@typeInfo(@TypeOf(og)) == .Pointer) {
-                        v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
-                        v.*.* = og.*;
-                    } else if (@typeInfo(@TypeOf(og)) == .Struct) {
-                        @compileError("Structs are not supported in reductions");
-                    } else {
-                        v.* = og;
-                    }
-                }
-
+                var private_copy = in.deep_copy(private_type, allocator, argss.args.private);
+                var reduction_copy = in.deep_copy(reduction_type, allocator, argss.args.reduction);
                 var true_args = argss.args.shared ++ private_copy.* ++ reduction_copy.*;
 
                 if (@typeInfo(R) == .ErrorUnion) {
@@ -163,18 +124,10 @@ pub const ctx = struct {
     }
 
     pub fn single(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
-        const args_type_info = @typeInfo(@TypeOf(args));
-        if (args_type_info != .Struct) {
-            @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
-        }
+        in.check_args(@TypeOf(args));
 
-        const f_type_info = @typeInfo(@TypeOf(f));
-        if (f_type_info != .Fn) {
-            @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
-            @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
+        const wants_ctx = in.check_fn_signature(f);
+        _ = wants_ctx;
 
         const single_id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -204,18 +157,10 @@ pub const ctx = struct {
     }
 
     pub fn master(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
-        const args_type_info = @typeInfo(@TypeOf(args));
-        if (args_type_info != .Struct) {
-            @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
-        }
+        in.check_args(@TypeOf(args));
 
-        const f_type_info = @typeInfo(@TypeOf(f));
-        if (f_type_info != .Fn) {
-            @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
-            @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
+        const wants_ctx = in.check_fn_signature(f);
+        _ = wants_ctx;
 
         const master_id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -235,11 +180,6 @@ pub const ctx = struct {
     }
 
     pub fn parallel_for(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) in.copy_ret(f) {
-        const args_type_info = @typeInfo(@TypeOf(args));
-        if (args_type_info != .Struct) {
-            @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
-        }
-
         const T = comptime ret: {
             if (!std.meta.trait.isSignedInt(@TypeOf(lower)) and !std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
                 @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(@TypeOf(lower)));
@@ -247,11 +187,12 @@ pub const ctx = struct {
 
             break :ret @TypeOf(lower);
         };
+        in.check_args(@TypeOf(args));
+
+        const wants_ctx = in.check_fn_signature(f);
+        _ = wants_ctx;
 
         const f_type_info = @typeInfo(@TypeOf(f));
-        if (f_type_info != .Fn) {
-            @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
         if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *ctx or f_type_info.Fn.params[1].type.? != T) {
             @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
         }
@@ -323,6 +264,11 @@ pub const ctx = struct {
     }
 
     fn critical(this: *Self, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
+        in.check_args(@TypeOf(args));
+
+        const wants_ctx = in.check_fn_signature(f);
+        _ = wants_ctx;
+
         const id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
@@ -378,13 +324,10 @@ pub const ctx = struct {
             .psource = "task" ++ @typeName(@TypeOf(f)),
         };
 
-        const f_type_info = @typeInfo(@TypeOf(f));
-        if (f_type_info != .Fn) {
-            @compileError("Expected function, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
-            @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-        }
+        in.check_args(@TypeOf(args));
+
+        const wants_ctx = in.check_fn_signature(f);
+        _ = wants_ctx;
 
         const new_args = .{this} ++ args;
         const ret_type = struct {
