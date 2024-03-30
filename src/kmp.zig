@@ -184,6 +184,28 @@ pub const kmp_task_t = extern struct {
     data2: kmp_routine_entry_t,
 };
 
+fn task_outline(comptime f: anytype, comptime ret_type: type) type {
+    return opaque {
+        /// This comes from decompiling the outline with ghidra
+        /// It should never really change since it's just a wrapper around the actual function
+        /// and it can't inline anything even if it wanted to
+        ///
+        /// remember to update the size_in_release_debug if the function changes, can't really enforce it though
+        const size_in_release_debug = 42;
+        fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
+            _ = gtid;
+
+            // TODO: CHECK WITH GHIDRA THE NEW SIZE
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            if (type_info == .ErrorUnion) {
+                pass.ret = try @call(.auto, f, pass.args);
+            } else {
+                pass.ret = @call(.auto, f, pass.args);
+            }
+            return 0;
+        }
+    };
+}
 extern "C" fn __kmpc_omp_task(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int;
 pub inline fn task(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int {
     return __kmpc_omp_task(name, gtid, new_task);
