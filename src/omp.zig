@@ -299,29 +299,6 @@ pub const ctx = struct {
         return ret;
     }
 
-    fn task_outline(comptime f: anytype, comptime ret_type: type) type {
-        return opaque {
-            /// This comes from decompiling the outline with ghidra
-            /// It should never really change since it's just a wrapper around the actual function
-            /// and it can't inline anything even if it wanted to
-            ///
-            /// remember to update the size_in_release_debug if the function changes, can't really enforce it though
-            const size_in_release_debug = 42;
-            fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
-                _ = gtid;
-
-                // TODO: CHECK WITH GHIDRA THE NEW SIZE
-                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-                if (type_info == .ErrorUnion) {
-                    pass.ret = try @call(.auto, f, pass.args);
-                } else {
-                    pass.ret = @call(.auto, f, pass.args);
-                }
-                return 0;
-            }
-        };
-    }
-
     pub fn task(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -339,7 +316,7 @@ pub const ctx = struct {
             args: @TypeOf(new_args),
         };
         const ret: ret_type = .{ .ret = undefined, .args = new_args };
-        const outline = task_outline(f, ret_type);
+        const outline = kmp.task_outline(f, ret_type);
 
         var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, outline.size_in_release_debug, 0, outline.task);
         t.shared = @constCast(@ptrCast(&ret));
