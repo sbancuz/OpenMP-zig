@@ -95,32 +95,36 @@ pub const ctx = struct {
                 }
 
                 if (red_opts.len > 0) {
-                    const id = .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                        .psource = "reduction" ++ @typeName(@TypeOf(argss.args.reduction)),
-                    };
                     var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-
-                    const res = kmp.reduce_nowait(@typeInfo(reduction_type).Struct.fields, &id, this.global_tid, argss.args.reduction.len, @sizeOf(reduction_type), reduction_copy, red_opts, &lck);
-                    if (res == 2) {
-                        @panic("Atomic reduce not implemented");
-                    }
-
-                    if (res == 1) {
-                        kmp.end_reduce_nowait(&id, this.global_tid, &lck);
-                        inline for (argss.args.reduction, reduction_copy) |og, *v| {
-                            if (@typeInfo(@TypeOf(og)) == .Pointer) {
-                                og.* = v.*.*;
-                            } else {
-                                og = v.*;
-                            }
-                        }
-                    }
+                    this.reduce(red_opts, reduction_type, argss.args.reduction, reduction_copy, &lck);
                 }
 
                 return;
             }
         };
+    }
+
+    fn reduce(this: *Self, comptime red_opts: []const reduction_operators, comptime f: anytype, red: anytype, red_copy: anytype, lck: *kmp.critical_name_t) void {
+        const id = .{
+            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+            .psource = "reduction" ++ @typeName(@TypeOf(f)),
+        };
+
+        const res = kmp.reduce_nowait(@typeInfo(@TypeOf(red)).Struct.fields, &id, this.global_tid, red_copy.len, @sizeOf(@TypeOf(red)), red_copy, red_opts, lck);
+        if (res == 2) {
+            @panic("Atomic reduce not implemented");
+        }
+
+        if (res == 1) {
+            kmp.end_reduce_nowait(&id, this.global_tid, lck);
+            inline for (red, red_copy) |og, *v| {
+                if (@typeInfo(@TypeOf(og)) == .Pointer) {
+                    og.* = v.*.*;
+                } else {
+                    og = v.*;
+                }
+            }
+        }
     }
 
     pub fn single(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
