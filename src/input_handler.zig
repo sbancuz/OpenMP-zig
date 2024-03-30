@@ -1,4 +1,5 @@
 const std = @import("std");
+const omp = @import("omp.zig");
 
 fn get_field_idx(comptime T: type, comptime field_name: []const u8) u32 {
     return comptime brk: {
@@ -81,4 +82,19 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
     };
 
     return .{ .shared = shared, .private = private, .reduction = reduction };
+}
+
+// TODO: Remove the need for the `ctx` argument, maybe the user doesn't want to use it
+fn check_fn_signature(comptime f: anytype) bool {
+    const f_type_info = @typeInfo(@TypeOf(f));
+    if (f_type_info != .Fn) {
+        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+    }
+    if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp.ctx) {
+        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+    }
+}
+
+pub fn copy_ret(comptime f: anytype) type {
+    return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
 }

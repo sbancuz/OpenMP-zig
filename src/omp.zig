@@ -21,16 +21,10 @@ pub const parallel_opts = struct {
 pub const comptime_parallel_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
 };
-pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) copy_ret(f) {
+pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) in.copy_ret(f) {
     const new_args = in.normalize_args(args);
-
-    const f_type_info = @typeInfo(@TypeOf(f));
-    if (f_type_info != .Fn) {
-        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-    }
-    if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *ctx) {
-        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
-    }
+    const wants_ctx = in.check_fn_signature(f);
+    _ = wants_ctx;
 
     const id = .{
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -41,19 +35,19 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptim
     }
 
     const ret_type = struct {
-        ret: copy_ret(f) = undefined,
+        ret: in.copy_ret(f) = undefined,
         args: @TypeOf(new_args),
     };
 
     var ret: ret_type = .{ .args = new_args };
 
     if (opts.condition) |cond| {
-        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f, copts.reduction).outline), @intFromBool(cond), &ret);
+        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), @intFromBool(cond), &ret);
     } else {
-        kmp.fork_call(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), copy_ret(f), f, copts.reduction).outline), &ret);
+        kmp.fork_call(&id, 1, @ptrCast(&ctx.make_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), &ret);
     }
 
-    if (copy_ret(f) != void) {
+    if (in.copy_ret(f) != void) {
         return ret.ret;
     }
 }
@@ -63,10 +57,6 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptim
 pub fn critical(comptime name: []const u8) @TypeOf(ctx.critical) {
     _ = name;
     return ctx.critical;
-}
-
-inline fn copy_ret(comptime f: anytype) type {
-    return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
 }
 
 pub const ctx = struct {
@@ -172,7 +162,7 @@ pub const ctx = struct {
         };
     }
 
-    pub fn single(this: *Self, comptime f: anytype, args: anytype) copy_ret(f) {
+    pub fn single(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         const args_type_info = @typeInfo(@TypeOf(args));
         if (args_type_info != .Struct) {
             @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
@@ -213,7 +203,7 @@ pub const ctx = struct {
         return res;
     }
 
-    pub fn master(this: *Self, comptime f: anytype, args: anytype) copy_ret(f) {
+    pub fn master(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         const args_type_info = @typeInfo(@TypeOf(args));
         if (args_type_info != .Struct) {
             @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
@@ -244,7 +234,7 @@ pub const ctx = struct {
         }
     }
 
-    pub fn parallel_for(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) copy_ret(f) {
+    pub fn parallel_for(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) in.copy_ret(f) {
         const args_type_info = @typeInfo(@TypeOf(args));
         if (args_type_info != .Struct) {
             @compileError("Expected struct or tuple, got " ++ @typeName(@TypeOf(args)) ++ " instead.");
@@ -319,7 +309,7 @@ pub const ctx = struct {
         // Figure out a way to not use this when not needed
         kmp.barrier(&id, this.global_tid);
 
-        if (copy_ret(f) != void) {
+        if (in.copy_ret(f) != void) {
             return undefined;
         }
     }
@@ -332,7 +322,7 @@ pub const ctx = struct {
         kmp.barrier(&id, this.global_tid);
     }
 
-    fn critical(this: *Self, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) copy_ret(f) {
+    fn critical(this: *Self, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
         const id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
@@ -382,7 +372,7 @@ pub const ctx = struct {
         };
     }
 
-    pub fn task(this: *Self, comptime f: anytype, args: anytype) copy_ret(f) {
+    pub fn task(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "task" ++ @typeName(@TypeOf(f)),
@@ -398,7 +388,7 @@ pub const ctx = struct {
 
         const new_args = .{this} ++ args;
         const ret_type = struct {
-            ret: copy_ret(f) = undefined,
+            ret: in.copy_ret(f) = undefined,
             args: @TypeOf(new_args),
         };
         const ret: ret_type = .{ .ret = undefined, .args = new_args };
@@ -408,7 +398,7 @@ pub const ctx = struct {
         t.shared = @constCast(@ptrCast(&ret));
         _ = kmp.task(&id, this.global_tid, t);
 
-        if (copy_ret(f) != void) {
+        if (in.copy_ret(f) != void) {
             return ret.ret;
         }
     }
