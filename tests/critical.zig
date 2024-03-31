@@ -14,7 +14,7 @@ fn parallel_sum(p: *omp.ctx, sum: *u32) void {
     var mysum: u32 = 0;
     p.parallel_for(for_fn, .{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{});
 
-    omp.critical("none")(p, .none, critical_fn, .{ sum, &mysum });
+    p.critical("none", .none, critical_fn, .{ sum, &mysum });
 }
 
 fn for_fn(p: *omp.ctx, i: u32, mysum: *u32) void {
@@ -57,16 +57,16 @@ fn parallel_sum_hint(p: *omp.ctx, sum: *u32, iter: u32) void {
 
     switch (iter % 4) {
         0 => {
-            omp.critical("a")(p, .uncontended, critical_fn_hint, .{ sum, &mysum });
+            p.critical("a", .uncontended, critical_fn_hint, .{ sum, &mysum });
         },
         1 => {
-            omp.critical("b")(p, .contended, critical_fn_hint, .{ sum, &mysum });
+            p.critical("b", .contended, critical_fn_hint, .{ sum, &mysum });
         },
         2 => {
-            omp.critical("c")(p, .nonspeculative, critical_fn_hint, .{ sum, &mysum });
+            p.critical("c", .nonspeculative, critical_fn_hint, .{ sum, &mysum });
         },
         3 => {
-            omp.critical("d")(p, .speculative, critical_fn_hint, .{ sum, &mysum });
+            p.critical("d", .speculative, critical_fn_hint, .{ sum, &mysum });
         },
         else => {
             unreachable;

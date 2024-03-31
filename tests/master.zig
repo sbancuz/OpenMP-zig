@@ -18,10 +18,10 @@ fn parallel_master(p: *omp.ctx, nthreads: *u32, executing_thread: *i32, tid_resu
 fn master_fn(p: *omp.ctx, nthreads: *u32, executing_thread: *i32, tid_result: *u32) void {
     var tid: i32 = @intCast(omp.get_thread_num());
     if (tid != 0) {
-        omp.critical("tid_result")(p, .none, critical_tid_result_fn, .{tid_result});
+        p.critical("tid_result", .none, critical_tid_result_fn, .{tid_result});
     }
 
-    omp.critical("none")(p, .none, critical_master_fn, .{nthreads});
+    p.critical("none", .none, critical_master_fn, .{nthreads});
     executing_thread.* = @intCast(omp.get_thread_num());
 }
 

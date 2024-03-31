@@ -52,13 +52,6 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptim
     }
 }
 
-/// Do not touch this function, each name has to be associated with a unique static lock,
-/// so we leverage comptime to generate a function with a static variable that is unique to the name
-pub fn critical(comptime name: []const u8) @TypeOf(ctx.critical) {
-    _ = name;
-    return ctx.critical;
-}
-
 pub const ctx = struct {
     const Self = @This();
 
@@ -267,7 +260,8 @@ pub const ctx = struct {
         kmp.barrier(&id, this.global_tid);
     }
 
-    fn critical(this: *Self, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub fn critical(this: *Self, comptime name: []const u8, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
+        _ = name;
         in.check_args(@TypeOf(args));
 
         const wants_ctx = in.check_fn_signature(f);

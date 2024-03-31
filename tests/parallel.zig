@@ -22,7 +22,7 @@ fn test_omp_parallel_default() !bool {
 fn parallel_default_para(p: *omp.ctx, sum: *u32, mysum: *u32) void {
     p.parallel_for(parallel_default_for, .{mysum}, @as(u32, 0), @as(u32, @intCast(params.loop_count + 1)), @as(u32, 1), .{});
 
-    omp.critical("para")(p, .none, critical_para, .{ sum, mysum.* });
+    p.critical("para", .none, critical_para, .{ sum, mysum.* });
 }
 
 fn parallel_default_for(p: *omp.ctx, i: u32, mysum: *u32) void {
@@ -69,7 +69,7 @@ fn parallel_if_para(p: *omp.ctx, sum: *u32, mysum: *u32) void {
         mysum.* += @as(u32, @intCast(i));
     }
 
-    omp.critical("para")(p, .none, critical_para, .{ sum, mysum.* });
+    p.critical("para", .none, critical_para, .{ sum, mysum.* });
 }
 
 test "parallel_if" {
@@ -101,7 +101,7 @@ fn test_omp_parallel_nested() !bool {
 }
 
 fn parallel_nested_para(p: *omp.ctx, counter: *i32) void {
-    omp.critical("nested")(p, .none, critical_nested_plus, .{counter});
+    p.critical("nested", .none, critical_nested_plus, .{counter});
 
     omp.parallel(parallel_nested_para_nest, .{ .shared = .{counter} }, .{}, .{});
 }
@@ -112,7 +112,7 @@ fn critical_nested_plus(p: *omp.ctx, counter: *i32) void {
 }
 
 fn parallel_nested_para_nest(p: *omp.ctx, counter: *i32) void {
-    omp.critical("nested")(p, .none, critical_nested_minus, .{counter});
+    p.critical("nested", .none, critical_nested_minus, .{counter});
 }
 
 fn critical_nested_minus(p: *omp.ctx, counter: *i32) void {
@@ -152,7 +152,7 @@ fn parallel_private_para(p: *omp.ctx, sum: *u32, num_threads: *u32, sum1: *u32) 
 
     p.parallel_for(parallel_for_private, .{sum1}, @as(u32, 1), @as(u32, 1000), @as(u32, 1), .{});
 
-    omp.critical("para")(p, .none, critical_private, .{ sum, num_threads, sum1.* });
+    p.critical("para", .none, critical_private, .{ sum, num_threads, sum1.* });
 }
 
 fn parallel_for_private(p: *omp.ctx, i: u32, sum1: *u32) void {
