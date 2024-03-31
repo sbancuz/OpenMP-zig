@@ -78,7 +78,11 @@ pub const ctx = struct {
 
                 if (red_opts.len > 0) {
                     var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-                    this.reduce(red_opts, reduction_type, argss.args.reduction, reduction_copy, &lck);
+                    const id = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                    };
+                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &lck);
                 }
 
                 return;
@@ -86,24 +90,26 @@ pub const ctx = struct {
         };
     }
 
-    fn reduce(this: *Self, comptime red_opts: []const reduction_operators, comptime f: anytype, red: anytype, red_copy: anytype, lck: *kmp.critical_name_t) void {
-        const id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-            .psource = "reduction" ++ @typeName(@TypeOf(f)),
-        };
-
-        const res = kmp.reduce_nowait(@typeInfo(@TypeOf(red)).Struct.fields, &id, this.global_tid, red_copy.len, @sizeOf(@TypeOf(red)), red_copy, red_opts, lck);
+    fn reduce(
+        this: *Self,
+        comptime id: *const kmp.ident_t,
+        out_reduction: anytype,
+        copies: @TypeOf(out_reduction),
+        comptime operators: []const kmp.reduction_operators,
+        lck: *kmp.critical_name_t,
+    ) void {
+        const res = kmp.reduce_nowait(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, this.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck);
         if (res == 2) {
             @panic("Atomic reduce not implemented");
         }
 
         if (res == 1) {
-            kmp.end_reduce_nowait(&id, this.global_tid, lck);
-            inline for (red, red_copy) |og, *v| {
+            kmp.end_reduce_nowait(id, this.global_tid, lck);
+            inline for (out_reduction, copies) |og, v| {
                 if (@typeInfo(@TypeOf(og)) == .Pointer) {
-                    og.* = v.*.*;
+                    og.* = v.*;
                 } else {
-                    og = v.*;
+                    og = v;
                 }
             }
         }
