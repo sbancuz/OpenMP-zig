@@ -118,15 +118,17 @@ pub fn deep_size_of(comptime T: type) usize {
     return size;
 }
 
-pub fn deep_copy(comptime T: type, allocator: std.mem.Allocator, original: T) *T {
-    var copy = (allocator.create(T) catch @panic("Failed to allocate memory"));
-    inline for (original, copy) |og, *v| {
+/// Deep copy a struct with pointers
+/// This function will copy the struct and all the pointers it contains
+/// but it won't go more than one level deep
+///
+/// WARNING: This function may be not memory safe if it doesn't get inlined
+pub inline fn deep_copy(original: anytype) @TypeOf(original) {
+    var copy: @TypeOf(original) = .{} ++ original;
+    inline for (original, &copy) |og, *v| {
         if (@typeInfo(@TypeOf(og)) == .Pointer) {
-            v.* = @constCast((allocator.create(@TypeOf(og.*)) catch @panic("Failed to allocate memory")));
-            v.*.* = og.*;
-        } else if (@typeInfo(@TypeOf(og)) == .Struct) {
-            v.* = (allocator.create(@TypeOf(og)) catch @panic("Failed to allocate memory"));
-            v.* = og;
+            var tmp = og.*;
+            v.* = &tmp;
         } else {
             v.* = og;
         }

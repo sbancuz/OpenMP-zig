@@ -59,13 +59,6 @@ pub const ctx = struct {
     bound_tid: c_int,
 
     fn parallel_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
-        const args_type = @typeInfo(T).Struct.fields[1].type;
-        const private_type = @typeInfo(args_type).Struct.fields[1].type;
-        const pri_buf_size = comptime in.deep_size_of(private_type);
-
-        const reduction_type = @typeInfo(args_type).Struct.fields[2].type;
-        const red_buf_size = comptime in.deep_size_of(reduction_type);
-
         return opaque {
             fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
                 var this: Self = .{
@@ -73,13 +66,9 @@ pub const ctx = struct {
                     .bound_tid = btid.*,
                 };
 
-                var buffer = [_]u8{0} ** (pri_buf_size + red_buf_size);
-                var fb = std.heap.FixedBufferAllocator.init(&buffer);
-                const allocator = fb.allocator();
-
-                var private_copy = in.deep_copy(private_type, allocator, argss.args.private);
-                var reduction_copy = in.deep_copy(reduction_type, allocator, argss.args.reduction);
-                var true_args = argss.args.shared ++ private_copy.* ++ reduction_copy.*;
+                var private_copy = in.deep_copy(argss.args.private);
+                var reduction_copy = in.deep_copy(argss.args.reduction);
+                var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
 
                 if (@typeInfo(R) == .ErrorUnion) {
                     argss.ret = @call(.auto, f, .{&this} ++ true_args) catch |err| err;
