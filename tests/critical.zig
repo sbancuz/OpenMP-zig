@@ -6,7 +6,7 @@ fn test_omp_critical() bool {
     var sum: u32 = 0;
     const known_sum: u32 = 999 * 1000 / 2;
 
-    omp.parallel(parallel_sum, .{ .shared = .{&sum} }, .{}, .{});
+    omp.parallel_ctx(parallel_sum, .{ .shared = .{&sum} }, .{}, .{});
     return known_sum == sum;
 }
 
@@ -17,13 +17,11 @@ fn parallel_sum(p: *omp.ctx, sum: *u32) void {
     p.critical("none", .none, critical_fn, .{ sum, &mysum });
 }
 
-fn for_fn(p: *omp.ctx, i: u32, mysum: *u32) void {
-    _ = p;
+fn for_fn(i: u32, mysum: *u32) void {
     mysum.* = mysum.* + i;
 }
 
-fn critical_fn(p: *omp.ctx, sum: *u32, mysum: *u32) void {
-    _ = p;
+fn critical_fn(sum: *u32, mysum: *u32) void {
     sum.* += mysum.*;
 }
 
@@ -43,7 +41,7 @@ fn omp_critical_hint(iter: u32) bool {
     var sum: u32 = 0;
     const known_sum: u32 = (999 * 1000) / 2;
 
-    omp.parallel(parallel_sum_hint, .{ .shared = .{ &sum, iter } }, .{}, .{});
+    omp.parallel_ctx(parallel_sum_hint, .{ .shared = .{ &sum, iter } }, .{}, .{});
     if (sum != known_sum) {
         std.debug.print("sum: {}, known_sum: {}\n", .{ sum, known_sum });
     }
@@ -74,13 +72,11 @@ fn parallel_sum_hint(p: *omp.ctx, sum: *u32, iter: u32) void {
     }
 }
 
-fn for_fn_hint(p: *omp.ctx, i: u32, mysum: *u32) void {
-    _ = p;
+fn for_fn_hint(i: u32, mysum: *u32) void {
     mysum.* = mysum.* + i;
 }
 
-fn critical_fn_hint(p: *omp.ctx, sum: *u32, mysum: *u32) void {
-    _ = p;
+fn critical_fn_hint(sum: *u32, mysum: *u32) void {
     sum.* += mysum.*;
 }
 

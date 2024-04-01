@@ -85,16 +85,22 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
 }
 
 // TODO: Remove the need for the `ctx` argument, maybe the user doesn't want to use it
-pub fn check_fn_signature(comptime f: anytype) bool {
+pub fn check_fn_signature(comptime f: anytype) void {
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
-        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+        @compileError("Expected function with signature `fn(, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
-    if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp.ctx) {
-        @compileError("Expected function with signature `fn(ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+}
+
+pub fn check_fn_signature_with_ctx(comptime f: anytype) void {
+    const f_type_info = @typeInfo(@TypeOf(f));
+    if (f_type_info != .Fn) {
+        @compileError("Expected function with signature `fn(*omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
     }
 
-    return true;
+    if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != *omp.ctx) {
+        @compileError("Expected function with signature `fn(*omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+    }
 }
 
 pub fn check_args(comptime T: type) void {

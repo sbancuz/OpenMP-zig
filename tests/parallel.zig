@@ -7,7 +7,7 @@ fn test_omp_parallel_default() !bool {
     var mysum: u32 = 0;
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
-    omp.parallel(parallel_default_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{}, .{});
+    omp.parallel_ctx(parallel_default_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{}, .{});
 
     if (known_sum != sum) {
         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
@@ -25,13 +25,11 @@ fn parallel_default_para(p: *omp.ctx, sum: *u32, mysum: *u32) void {
     p.critical("para", .none, critical_para, .{ sum, mysum.* });
 }
 
-fn parallel_default_for(p: *omp.ctx, i: u32, mysum: *u32) void {
-    _ = p;
+fn parallel_default_for(i: u32, mysum: *u32) void {
     mysum.* += i;
 }
 
-fn critical_para(p: *omp.ctx, sum: *u32, mysum: u32) void {
-    _ = p;
+fn critical_para(sum: *u32, mysum: u32) void {
     sum.* += mysum;
 }
 
@@ -52,7 +50,7 @@ fn test_omp_parallel_if() !bool {
     const control: u32 = 1;
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
-    omp.parallel(parallel_if_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{ .condition = control == 0 }, .{});
+    omp.parallel_ctx(parallel_if_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{ .condition = control == 0 }, .{});
 
     if (known_sum != sum) {
         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
@@ -95,7 +93,7 @@ fn test_omp_parallel_nested() !bool {
     omp.set_nested(true);
     omp.set_max_active_levels(omp.get_max_active_levels());
 
-    omp.parallel(parallel_nested_para, .{ .shared = .{&counter} }, .{}, .{});
+    omp.parallel_ctx(parallel_nested_para, .{ .shared = .{&counter} }, .{}, .{});
 
     return counter != 0;
 }
@@ -103,11 +101,10 @@ fn test_omp_parallel_nested() !bool {
 fn parallel_nested_para(p: *omp.ctx, counter: *i32) void {
     p.critical("nested", .none, critical_nested_plus, .{counter});
 
-    omp.parallel(parallel_nested_para_nest, .{ .shared = .{counter} }, .{}, .{});
+    omp.parallel_ctx(parallel_nested_para_nest, .{ .shared = .{counter} }, .{}, .{});
 }
 
-fn critical_nested_plus(p: *omp.ctx, counter: *i32) void {
-    _ = p;
+fn critical_nested_plus(counter: *i32) void {
     counter.* += 1;
 }
 
@@ -115,8 +112,7 @@ fn parallel_nested_para_nest(p: *omp.ctx, counter: *i32) void {
     p.critical("nested", .none, critical_nested_minus, .{counter});
 }
 
-fn critical_nested_minus(p: *omp.ctx, counter: *i32) void {
-    _ = p;
+fn critical_nested_minus(counter: *i32) void {
     counter.* -= 1;
 }
 
@@ -136,7 +132,7 @@ fn test_omp_parallel_private() !bool {
     var num_threads: u32 = 0;
     var sum1: u32 = 0;
 
-    omp.parallel(parallel_private_para, .{ .shared = .{ &sum, &num_threads }, .private = .{&sum1} }, .{}, .{});
+    omp.parallel_ctx(parallel_private_para, .{ .shared = .{ &sum, &num_threads }, .private = .{&sum1} }, .{}, .{});
 
     const known_sum: u32 = ((999 * 1000) / 2) + (7 * num_threads);
     if (known_sum != sum) {
@@ -155,13 +151,11 @@ fn parallel_private_para(p: *omp.ctx, sum: *u32, num_threads: *u32, sum1: *u32) 
     p.critical("para", .none, critical_private, .{ sum, num_threads, sum1.* });
 }
 
-fn parallel_for_private(p: *omp.ctx, i: u32, sum1: *u32) void {
-    _ = p;
+fn parallel_for_private(i: u32, sum1: *u32) void {
     sum1.* += i;
 }
 
-fn critical_private(p: *omp.ctx, sum: *u32, num_threads: *u32, sum1: u32) void {
-    _ = p;
+fn critical_private(sum: *u32, num_threads: *u32, sum1: u32) void {
     sum.* += sum1;
     num_threads.* += 1;
 }

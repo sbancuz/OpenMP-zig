@@ -7,12 +7,12 @@ fn test_omp_master() bool {
     var executing_thread: i32 = -1;
     var tid_result: u32 = 0;
 
-    omp.parallel(parallel_master, .{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, .{}, .{});
+    omp.parallel_ctx(parallel_master, .{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, .{}, .{});
     return (nthreads == 1) and (executing_thread == 0) and (tid_result == 0);
 }
 
 fn parallel_master(p: *omp.ctx, nthreads: *u32, executing_thread: *i32, tid_result: *u32) void {
-    p.master(master_fn, .{ nthreads, executing_thread, tid_result });
+    p.master_ctx(master_fn, .{ nthreads, executing_thread, tid_result });
 }
 
 fn master_fn(p: *omp.ctx, nthreads: *u32, executing_thread: *i32, tid_result: *u32) void {
@@ -25,13 +25,11 @@ fn master_fn(p: *omp.ctx, nthreads: *u32, executing_thread: *i32, tid_result: *u
     executing_thread.* = @intCast(omp.get_thread_num());
 }
 
-fn critical_master_fn(p: *omp.ctx, nthreads: *u32) void {
-    _ = p;
+fn critical_master_fn(nthreads: *u32) void {
     nthreads.* += 1;
 }
 
-fn critical_tid_result_fn(p: *omp.ctx, tid_result: *u32) void {
-    _ = p;
+fn critical_tid_result_fn(tid_result: *u32) void {
     tid_result.* += 1;
 }
 

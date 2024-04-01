@@ -20,11 +20,22 @@ pub const parallel_opts = struct {
 
 pub const comptime_parallel_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
+    give_context: bool = false,
 };
+
+pub fn parallel_ctx(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) in.copy_ret(f) {
+    in.check_fn_signature_with_ctx(f);
+    const new_copts = comptime_parallel_opts{
+        .reduction = copts.reduction,
+        .give_context = true,
+    };
+
+    return parallel(f, args, opts, new_copts);
+}
+
 pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) in.copy_ret(f) {
     const new_args = in.normalize_args(args);
-    const wants_ctx = in.check_fn_signature(f);
-    _ = wants_ctx;
+    in.check_fn_signature(f);
 
     const id = .{
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -41,15 +52,23 @@ pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptim
 
     var ret: ret_type = .{ .args = new_args };
 
-    if (opts.condition) |cond| {
-        kmp.fork_call_if(&id, 1, @ptrCast(&ctx.parallel_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), @intFromBool(cond), &ret);
+    const parallel_outline = ctx.parallel_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction);
+
+    if (copts.give_context) {
+        if (opts.condition) |cond| {
+            kmp.fork_call_if(&id, 1, @ptrCast(&parallel_outline.outline_ctx), @intFromBool(cond), &ret);
+        } else {
+            kmp.fork_call(&id, 1, @ptrCast(&parallel_outline.outline_ctx), &ret);
+        }
     } else {
-        kmp.fork_call(&id, 1, @ptrCast(&ctx.parallel_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction).outline), &ret);
+        if (opts.condition) |cond| {
+            kmp.fork_call_if(&id, 1, @ptrCast(&parallel_outline.outline), @intFromBool(cond), &ret);
+        } else {
+            kmp.fork_call(&id, 1, @ptrCast(&parallel_outline.outline), &ret);
+        }
     }
 
-    if (in.copy_ret(f) != void) {
-        return ret.ret;
-    }
+    return ret.ret;
 }
 
 pub const ctx = struct {
@@ -60,7 +79,7 @@ pub const ctx = struct {
 
     fn parallel_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
         return opaque {
-            fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
+            fn outline_ctx(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
                 var this: Self = .{
                     .global_tid = gtid.*,
                     .bound_tid = btid.*,
@@ -74,6 +93,34 @@ pub const ctx = struct {
                     argss.ret = @call(.auto, f, .{&this} ++ true_args) catch |err| err;
                 } else {
                     argss.ret = @call(.auto, f, .{&this} ++ true_args);
+                }
+
+                if (red_opts.len > 0) {
+                    var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+                    const id = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                    };
+                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &lck);
+                }
+
+                return;
+            }
+
+            fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
+                var this: Self = .{
+                    .global_tid = gtid.*,
+                    .bound_tid = btid.*,
+                };
+
+                var private_copy = in.deep_copy(argss.args.private);
+                var reduction_copy = in.deep_copy(argss.args.reduction);
+                var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
+
+                if (@typeInfo(R) == .ErrorUnion) {
+                    argss.ret = @call(.auto, f, true_args) catch |err| err;
+                } else {
+                    argss.ret = @call(.auto, f, true_args);
                 }
 
                 if (red_opts.len > 0) {
@@ -115,11 +162,13 @@ pub const ctx = struct {
         }
     }
 
+    pub inline fn single_ctx(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+        in.check_fn_signature_with_ctx(f);
+        this.single(f, .{this} ++ args);
+    }
     pub fn single(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         in.check_args(@TypeOf(args));
-
-        const wants_ctx = in.check_fn_signature(f);
-        _ = wants_ctx;
+        in.check_fn_signature(f);
 
         const single_id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -132,13 +181,12 @@ pub const ctx = struct {
 
         const res = undefined;
         if (kmp.single(&single_id, this.global_tid) == 1) {
-            const new_args = .{this} ++ args;
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
             if (type_info == .ErrorUnion) {
-                res = try @call(.auto, f, new_args);
+                res = try @call(.auto, f, args);
             } else {
-                res = @call(.auto, f, new_args);
+                res = @call(.auto, f, args);
             }
 
             kmp.end_single(&single_id, this.global_tid);
@@ -148,11 +196,13 @@ pub const ctx = struct {
         return res;
     }
 
+    pub inline fn master_ctx(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+        in.check_fn_signature_with_ctx(f);
+        this.master(f, .{this} ++ args);
+    }
     pub fn master(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         in.check_args(@TypeOf(args));
-
-        const wants_ctx = in.check_fn_signature(f);
-        _ = wants_ctx;
+        in.check_fn_signature(f);
 
         const master_id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -160,17 +210,19 @@ pub const ctx = struct {
         };
 
         if (kmp.master(&master_id, this.global_tid) == 1) {
-            const new_args = .{this} ++ args;
-
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
             if (type_info == .ErrorUnion) {
-                return try @call(.auto, f, new_args);
+                return try @call(.auto, f, args);
             } else {
-                return @call(.auto, f, new_args);
+                return @call(.auto, f, args);
             }
         }
     }
 
+    pub inline fn parallel_for_ctx(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) in.copy_ret(f) {
+        in.check_fn_signature_with_ctx(f);
+        this.parallel_for(f, .{this} ++ args, lower, upper, increment, opts);
+    }
     pub fn parallel_for(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) in.copy_ret(f) {
         const T = comptime ret: {
             if (!std.meta.trait.isSignedInt(@TypeOf(lower)) and !std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
@@ -181,12 +233,11 @@ pub const ctx = struct {
         };
         in.check_args(@TypeOf(args));
 
-        const wants_ctx = in.check_fn_signature(f);
-        _ = wants_ctx;
+        in.check_fn_signature(f);
 
         const f_type_info = @typeInfo(@TypeOf(f));
-        if (f_type_info.Fn.params.len < 2 or f_type_info.Fn.params[0].type.? != *ctx or f_type_info.Fn.params[1].type.? != T) {
-            @compileError("Expected function with signature `fn(ctx, numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != T) {
+            @compileError("Expected function with signature `fn(numeric, ...)` or `fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
         }
 
         const id = .{
@@ -222,7 +273,7 @@ pub const ctx = struct {
             }
             // std.debug.print("upp: {}, i: {}, last_iter: {}, stride: {}\n", .{ upp, i, last_iter, stri });
 
-            const new_args = .{ this, i } ++ args;
+            const new_args = .{i} ++ args;
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
             if (type_info == .ErrorUnion) {
@@ -255,12 +306,14 @@ pub const ctx = struct {
         kmp.barrier(&id, this.global_tid);
     }
 
+    pub inline fn critical_ctx(this: *Self, comptime name: []const u8, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
+        in.check_fn_signature_with_ctx(f);
+        this.critical(name, sync, f, .{this} ++ args);
+    }
     pub fn critical(this: *Self, comptime name: []const u8, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
         _ = name;
         in.check_args(@TypeOf(args));
-
-        const wants_ctx = in.check_fn_signature(f);
-        _ = wants_ctx;
+        in.check_fn_signature(f);
 
         const id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
@@ -273,14 +326,12 @@ pub const ctx = struct {
 
         kmp.critical(&id, this.global_tid, &static.lock, @intFromEnum(sync));
 
-        const new_args = .{this} ++ args;
-
         const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
         const ret = ret: {
             if (type_info == .ErrorUnion) {
-                break :ret try @call(.auto, f, new_args);
+                break :ret try @call(.auto, f, args);
             } else {
-                break :ret @call(.auto, f, new_args);
+                break :ret @call(.auto, f, args);
             }
         };
         kmp.critical_end(&id, this.global_tid, &static.lock);
@@ -288,6 +339,10 @@ pub const ctx = struct {
         return ret;
     }
 
+    pub inline fn task_ctx(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+        in.check_fn_signature_with_ctx(f);
+        this.task(f, .{this} ++ args);
+    }
     pub fn task(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
         const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
@@ -295,16 +350,13 @@ pub const ctx = struct {
         };
 
         in.check_args(@TypeOf(args));
+        in.check_fn_signature(f);
 
-        const wants_ctx = in.check_fn_signature(f);
-        _ = wants_ctx;
-
-        const new_args = .{this} ++ args;
         const ret_type = struct {
             ret: in.copy_ret(f) = undefined,
-            args: @TypeOf(new_args),
+            args: @TypeOf(args),
         };
-        const ret: ret_type = .{ .ret = undefined, .args = new_args };
+        const ret: ret_type = .{ .ret = undefined, .args = args };
         const outline = kmp.task_outline(f, ret_type);
 
         var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, outline.size_in_release_debug, 0, outline.task);
