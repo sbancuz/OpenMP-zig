@@ -7,7 +7,21 @@ fn test_omp_parallel_default() !bool {
     var mysum: u32 = 0;
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
-    omp.parallel_ctx(parallel_default_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{}, .{});
+    omp.parallel_ctx(.{ .shared = .{&sum}, .private = .{&mysum} }, .{}, .{}, struct {
+        fn f(p: *omp.ctx, f_sum: *u32, f_mysum: *u32) void {
+            p.parallel_for(.{f_mysum}, @as(u32, 0), @as(u32, @intCast(params.loop_count + 1)), @as(u32, 1), .{}, struct {
+                fn f(i: u32, ff_mysum: *u32) void {
+                    ff_mysum.* += i;
+                }
+            }.f);
+
+            p.critical(.{ f_sum, f_mysum.* }, "para", .none, struct {
+                fn f(ff_sum: *u32, ff_mysum: u32) void {
+                    ff_sum.* += ff_mysum;
+                }
+            }.f);
+        }
+    }.f);
 
     if (known_sum != sum) {
         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
@@ -17,20 +31,6 @@ fn test_omp_parallel_default() !bool {
     try std.testing.expect(mysum == 0);
 
     return known_sum == sum;
-}
-
-fn parallel_default_para(p: *omp.ctx, sum: *u32, mysum: *u32) void {
-    p.parallel_for(parallel_default_for, .{mysum}, @as(u32, 0), @as(u32, @intCast(params.loop_count + 1)), @as(u32, 1), .{});
-
-    p.critical("para", .none, critical_para, .{ sum, mysum.* });
-}
-
-fn parallel_default_for(i: u32, mysum: *u32) void {
-    mysum.* += i;
-}
-
-fn critical_para(sum: *u32, mysum: u32) void {
-    sum.* += mysum;
 }
 
 test "parallel_default" {
@@ -50,7 +50,18 @@ fn test_omp_parallel_if() !bool {
     const control: u32 = 1;
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
-    omp.parallel_ctx(parallel_if_para, .{ .shared = .{&sum}, .private = .{&mysum} }, .{ .condition = control == 0 }, .{});
+    omp.parallel_ctx(.{ .shared = .{&sum}, .private = .{&mysum} }, .{ .condition = control == 0 }, .{}, struct {
+        fn f(p: *omp.ctx, f_sum: *u32, f_mysum: *u32) void {
+            for (0..params.loop_count + 1) |i| {
+                f_mysum.* += @as(u32, @intCast(i));
+            }
+            p.critical(.{ f_sum, f_mysum.* }, "para", .none, struct {
+                fn f(ff_sum: *u32, ff_mysum: u32) void {
+                    ff_sum.* += ff_mysum;
+                }
+            }.f);
+        }
+    }.f);
 
     if (known_sum != sum) {
         std.debug.print("KNOWN_SUM = {}\n", .{known_sum});
@@ -60,14 +71,6 @@ fn test_omp_parallel_if() !bool {
     try std.testing.expect(mysum == 0);
 
     return known_sum == sum;
-}
-
-fn parallel_if_para(p: *omp.ctx, sum: *u32, mysum: *u32) void {
-    for (0..params.loop_count + 1) |i| {
-        mysum.* += @as(u32, @intCast(i));
-    }
-
-    p.critical("para", .none, critical_para, .{ sum, mysum.* });
 }
 
 test "parallel_if" {
@@ -93,27 +96,27 @@ fn test_omp_parallel_nested() !bool {
     omp.set_nested(true);
     omp.set_max_active_levels(omp.get_max_active_levels());
 
-    omp.parallel_ctx(parallel_nested_para, .{ .shared = .{&counter} }, .{}, .{});
+    omp.parallel_ctx(.{ .shared = .{&counter} }, .{}, .{}, struct {
+        fn f(p: *omp.ctx, f_counter: *i32) void {
+            p.critical(.{f_counter}, "nested", .none, struct {
+                fn f(ff_counter: *i32) void {
+                    ff_counter.* += 1;
+                }
+            }.f);
+
+            omp.parallel_ctx(.{ .shared = .{f_counter} }, .{}, .{}, struct {
+                fn f(pp: *omp.ctx, pf_counter: *i32) void {
+                    pp.critical(.{pf_counter}, "nested", .none, struct {
+                        fn f(fpf_counter: *i32) void {
+                            fpf_counter.* -= 1;
+                        }
+                    }.f);
+                }
+            }.f);
+        }
+    }.f);
 
     return counter != 0;
-}
-
-fn parallel_nested_para(p: *omp.ctx, counter: *i32) void {
-    p.critical("nested", .none, critical_nested_plus, .{counter});
-
-    omp.parallel_ctx(parallel_nested_para_nest, .{ .shared = .{counter} }, .{}, .{});
-}
-
-fn critical_nested_plus(counter: *i32) void {
-    counter.* += 1;
-}
-
-fn parallel_nested_para_nest(p: *omp.ctx, counter: *i32) void {
-    p.critical("nested", .none, critical_nested_minus, .{counter});
-}
-
-fn critical_nested_minus(counter: *i32) void {
-    counter.* -= 1;
 }
 
 test "parallel_nested" {
@@ -132,7 +135,24 @@ fn test_omp_parallel_private() !bool {
     var num_threads: u32 = 0;
     var sum1: u32 = 0;
 
-    omp.parallel_ctx(parallel_private_para, .{ .shared = .{ &sum, &num_threads }, .private = .{&sum1} }, .{}, .{});
+    omp.parallel_ctx(.{ .shared = .{ &sum, &num_threads }, .private = .{&sum1} }, .{}, .{}, struct {
+        fn f(p: *omp.ctx, f_sum: *u32, f_num_threads: *u32, f_sum1: *u32) void {
+            f_sum1.* = 7;
+
+            p.parallel_for(.{f_sum1}, @as(u32, 1), @as(u32, 1000), @as(u32, 1), .{}, struct {
+                fn f(i: u32, ff_sum1: *u32) void {
+                    ff_sum1.* += i;
+                }
+            }.f);
+
+            p.critical(.{ f_sum, f_num_threads, f_sum1.* }, "para", .none, struct {
+                fn f(ff_sum: *u32, ff_num_threads: *u32, ff_sum1: u32) void {
+                    ff_sum.* += ff_sum1;
+                    ff_num_threads.* += 1;
+                }
+            }.f);
+        }
+    }.f);
 
     const known_sum: u32 = ((999 * 1000) / 2) + (7 * num_threads);
     if (known_sum != sum) {
@@ -141,23 +161,6 @@ fn test_omp_parallel_private() !bool {
         std.debug.print("SUM = {}\n", .{sum});
     }
     return known_sum == sum;
-}
-
-fn parallel_private_para(p: *omp.ctx, sum: *u32, num_threads: *u32, sum1: *u32) void {
-    sum1.* = 7;
-
-    p.parallel_for(parallel_for_private, .{sum1}, @as(u32, 1), @as(u32, 1000), @as(u32, 1), .{});
-
-    p.critical("para", .none, critical_private, .{ sum, num_threads, sum1.* });
-}
-
-fn parallel_for_private(i: u32, sum1: *u32) void {
-    sum1.* += i;
-}
-
-fn critical_private(sum: *u32, num_threads: *u32, sum1: u32) void {
-    sum.* += sum1;
-    num_threads.* += 1;
 }
 
 test "parallel_private" {

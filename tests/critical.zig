@@ -6,23 +6,24 @@ fn test_omp_critical() bool {
     var sum: u32 = 0;
     const known_sum: u32 = 999 * 1000 / 2;
 
-    omp.parallel_ctx(parallel_sum, .{ .shared = .{&sum} }, .{}, .{});
+    omp.parallel_ctx(.{ .shared = .{&sum} }, .{}, .{}, struct {
+        fn f(p: *omp.ctx, f_sum: *u32) void {
+            var mysum: u32 = 0;
+
+            p.parallel_for(.{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{}, struct {
+                fn f(i: u32, f_mysum: *u32) void {
+                    f_mysum.* = f_mysum.* + i;
+                }
+            }.f);
+
+            p.critical(.{ f_sum, &mysum }, "none", .none, struct {
+                fn f(ff_sum: *u32, f_mysum: *u32) void {
+                    ff_sum.* += f_mysum.*;
+                }
+            }.f);
+        }
+    }.f);
     return known_sum == sum;
-}
-
-fn parallel_sum(p: *omp.ctx, sum: *u32) void {
-    var mysum: u32 = 0;
-    p.parallel_for(for_fn, .{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{});
-
-    p.critical("none", .none, critical_fn, .{ sum, &mysum });
-}
-
-fn for_fn(i: u32, mysum: *u32) void {
-    mysum.* = mysum.* + i;
-}
-
-fn critical_fn(sum: *u32, mysum: *u32) void {
-    sum.* += mysum.*;
 }
 
 test "critical" {
@@ -41,43 +42,45 @@ fn omp_critical_hint(iter: u32) bool {
     var sum: u32 = 0;
     const known_sum: u32 = (999 * 1000) / 2;
 
-    omp.parallel_ctx(parallel_sum_hint, .{ .shared = .{ &sum, iter } }, .{}, .{});
+    omp.parallel_ctx(.{ .shared = .{ &sum, iter } }, .{}, .{}, struct {
+        fn f(p: *omp.ctx, f_sum: *u32, f_iter: u32) void {
+            var mysum: u32 = 0;
+            p.parallel_for(.{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{}, struct {
+                fn f(i: u32, f_mysum: *u32) void {
+                    f_mysum.* = f_mysum.* + i;
+                }
+            }.f);
+
+            const fun = struct {
+                fn f(ff_sum: *u32, f_mysum: *u32) void {
+                    ff_sum.* += f_mysum.*;
+                }
+            }.f;
+
+            switch (f_iter % 4) {
+                0 => {
+                    p.critical(.{ f_sum, &mysum }, "a", .uncontended, fun);
+                },
+                1 => {
+                    p.critical(.{ f_sum, &mysum }, "b", .contended, fun);
+                },
+                2 => {
+                    p.critical(.{ f_sum, &mysum }, "c", .nonspeculative, fun);
+                },
+                3 => {
+                    p.critical(.{ f_sum, &mysum }, "d", .speculative, fun);
+                },
+                else => {
+                    unreachable;
+                },
+            }
+        }
+    }.f);
     if (sum != known_sum) {
         std.debug.print("sum: {}, known_sum: {}\n", .{ sum, known_sum });
     }
 
     return known_sum == sum;
-}
-
-fn parallel_sum_hint(p: *omp.ctx, sum: *u32, iter: u32) void {
-    var mysum: u32 = 0;
-    p.parallel_for(for_fn_hint, .{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{});
-
-    switch (iter % 4) {
-        0 => {
-            p.critical("a", .uncontended, critical_fn_hint, .{ sum, &mysum });
-        },
-        1 => {
-            p.critical("b", .contended, critical_fn_hint, .{ sum, &mysum });
-        },
-        2 => {
-            p.critical("c", .nonspeculative, critical_fn_hint, .{ sum, &mysum });
-        },
-        3 => {
-            p.critical("d", .speculative, critical_fn_hint, .{ sum, &mysum });
-        },
-        else => {
-            unreachable;
-        },
-    }
-}
-
-fn for_fn_hint(i: u32, mysum: *u32) void {
-    mysum.* = mysum.* + i;
-}
-
-fn critical_fn_hint(sum: *u32, mysum: *u32) void {
-    sum.* += mysum.*;
 }
 
 test "critical_hint" {

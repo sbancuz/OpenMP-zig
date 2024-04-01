@@ -23,17 +23,27 @@ pub const comptime_parallel_opts = struct {
     give_context: bool = false,
 };
 
-pub fn parallel_ctx(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) in.copy_ret(f) {
+pub fn parallel_ctx(
+    args: anytype,
+    opts: parallel_opts,
+    comptime copts: comptime_parallel_opts,
+    comptime f: anytype,
+) in.copy_ret(f) {
     in.check_fn_signature_with_ctx(f);
     const new_copts = comptime_parallel_opts{
         .reduction = copts.reduction,
         .give_context = true,
     };
 
-    return parallel(f, args, opts, new_copts);
+    return parallel(args, opts, new_copts, f);
 }
 
-pub fn parallel(comptime f: anytype, args: anytype, opts: parallel_opts, comptime copts: comptime_parallel_opts) in.copy_ret(f) {
+pub fn parallel(
+    args: anytype,
+    opts: parallel_opts,
+    comptime copts: comptime_parallel_opts,
+    comptime f: anytype,
+) in.copy_ret(f) {
     const new_args = in.normalize_args(args);
     in.check_fn_signature(f);
 
@@ -77,9 +87,18 @@ pub const ctx = struct {
     global_tid: c_int,
     bound_tid: c_int,
 
-    fn parallel_outline(comptime T: type, comptime R: type, comptime f: anytype, comptime red_opts: []const reduction_operators) type {
+    fn parallel_outline(
+        comptime T: type,
+        comptime R: type,
+        comptime f: anytype,
+        comptime red_opts: []const reduction_operators,
+    ) type {
         return opaque {
-            fn outline_ctx(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
+            fn outline_ctx(
+                gtid: *c_int,
+                btid: *c_int,
+                argss: *T,
+            ) callconv(.C) void {
                 var this: Self = .{
                     .global_tid = gtid.*,
                     .bound_tid = btid.*,
@@ -107,7 +126,11 @@ pub const ctx = struct {
                 return;
             }
 
-            fn outline(gtid: *c_int, btid: *c_int, argss: *T) callconv(.C) void {
+            fn outline(
+                gtid: *c_int,
+                btid: *c_int,
+                argss: *T,
+            ) callconv(.C) void {
                 var this: Self = .{
                     .global_tid = gtid.*,
                     .bound_tid = btid.*,
@@ -162,11 +185,19 @@ pub const ctx = struct {
         }
     }
 
-    pub inline fn single_ctx(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub inline fn single_ctx(
+        this: *Self,
+        args: anytype,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_fn_signature_with_ctx(f);
-        this.single(f, .{this} ++ args);
+        this.single(.{this} ++ args, f);
     }
-    pub fn single(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub fn single(
+        this: *Self,
+        args: anytype,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_args(@TypeOf(args));
         in.check_fn_signature(f);
 
@@ -196,11 +227,19 @@ pub const ctx = struct {
         return res;
     }
 
-    pub inline fn master_ctx(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub inline fn master_ctx(
+        this: *Self,
+        args: anytype,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_fn_signature_with_ctx(f);
-        this.master(f, .{this} ++ args);
+        this.master(.{this} ++ args, f);
     }
-    pub fn master(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub fn master(
+        this: *Self,
+        args: anytype,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_args(@TypeOf(args));
         in.check_fn_signature(f);
 
@@ -219,11 +258,27 @@ pub const ctx = struct {
         }
     }
 
-    pub inline fn parallel_for_ctx(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) in.copy_ret(f) {
+    pub inline fn parallel_for_ctx(
+        this: *Self,
+        args: anytype,
+        lower: anytype,
+        upper: anytype,
+        increment: anytype,
+        opts: parallel_for_opts,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_fn_signature_with_ctx(f);
-        this.parallel_for(f, .{this} ++ args, lower, upper, increment, opts);
+        this.parallel_for(.{this} ++ args, lower, upper, increment, opts, f);
     }
-    pub fn parallel_for(this: *Self, comptime f: anytype, args: anytype, lower: anytype, upper: anytype, increment: anytype, opts: parallel_for_opts) in.copy_ret(f) {
+    pub fn parallel_for(
+        this: *Self,
+        args: anytype,
+        lower: anytype,
+        upper: anytype,
+        increment: anytype,
+        opts: parallel_for_opts,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         const T = comptime ret: {
             if (!std.meta.trait.isSignedInt(@TypeOf(lower)) and !std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
                 @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(@TypeOf(lower)));
@@ -298,7 +353,9 @@ pub const ctx = struct {
         }
     }
 
-    pub fn barrier(this: *Self) void {
+    pub fn barrier(
+        this: *Self,
+    ) void {
         const id: kmp.ident_t = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
             .psource = "barrier",
@@ -306,11 +363,23 @@ pub const ctx = struct {
         kmp.barrier(&id, this.global_tid);
     }
 
-    pub inline fn critical_ctx(this: *Self, comptime name: []const u8, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub inline fn critical_ctx(
+        this: *Self,
+        args: anytype,
+        comptime name: []const u8,
+        comptime sync: sync_hint_t,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_fn_signature_with_ctx(f);
-        this.critical(name, sync, f, .{this} ++ args);
+        this.critical(args, name, sync, f);
     }
-    pub fn critical(this: *Self, comptime name: []const u8, comptime sync: sync_hint_t, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub fn critical(
+        this: *Self,
+        args: anytype,
+        comptime name: []const u8,
+        comptime sync: sync_hint_t,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         _ = name;
         in.check_args(@TypeOf(args));
         in.check_fn_signature(f);
@@ -339,11 +408,19 @@ pub const ctx = struct {
         return ret;
     }
 
-    pub inline fn task_ctx(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub inline fn task_ctx(
+        this: *Self,
+        args: anytype,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         in.check_fn_signature_with_ctx(f);
-        this.task(f, .{this} ++ args);
+        this.task(.{this} ++ args, f);
     }
-    pub fn task(this: *Self, comptime f: anytype, args: anytype) in.copy_ret(f) {
+    pub fn task(
+        this: *Self,
+        args: anytype,
+        comptime f: anytype,
+    ) in.copy_ret(f) {
         const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "task" ++ @typeName(@TypeOf(f)),
@@ -363,12 +440,12 @@ pub const ctx = struct {
         t.shared = @constCast(@ptrCast(&ret));
         _ = kmp.task(&id, this.global_tid, t);
 
-        if (in.copy_ret(f) != void) {
-            return ret.ret;
-        }
+        return ret.ret;
     }
 
-    pub fn taskyeild(this: *Self) void {
+    pub fn taskyeild(
+        this: *Self,
+    ) void {
         const id = .{
             .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
             .psource = "taskyeild",
