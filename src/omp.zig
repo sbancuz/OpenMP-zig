@@ -23,7 +23,7 @@ pub const comptime_parallel_opts = struct {
     give_context: bool = false,
 };
 
-pub fn parallel_ctx(
+pub inline fn parallel_ctx(
     args: anytype,
     opts: parallel_opts,
     comptime copts: comptime_parallel_opts,
@@ -87,7 +87,7 @@ pub const ctx = struct {
     global_tid: c_int,
     bound_tid: c_int,
 
-    fn parallel_outline(
+    inline fn parallel_outline(
         comptime T: type,
         comptime R: type,
         comptime f: anytype,
@@ -113,9 +113,9 @@ pub const ctx = struct {
                 var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
 
                 if (@typeInfo(R) == .ErrorUnion) {
-                    argss.ret = @call(.auto, f, .{&this} ++ true_args) catch |err| err;
+                    argss.ret = @call(.always_inline, f, .{&this} ++ true_args) catch |err| err;
                 } else {
-                    argss.ret = @call(.auto, f, .{&this} ++ true_args);
+                    argss.ret = @call(.always_inline, f, .{&this} ++ true_args);
                 }
 
                 if (red_opts.len > 0) {
@@ -144,9 +144,9 @@ pub const ctx = struct {
                 var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
 
                 if (@typeInfo(R) == .ErrorUnion) {
-                    argss.ret = @call(.auto, f, true_args) catch |err| err;
+                    argss.ret = @call(.always_inline, f, true_args) catch |err| err;
                 } else {
-                    argss.ret = @call(.auto, f, true_args);
+                    argss.ret = @call(.always_inline, f, true_args);
                 }
 
                 if (red_opts.len > 0) {
@@ -162,7 +162,7 @@ pub const ctx = struct {
         };
     }
 
-    fn reduce(
+    inline fn reduce(
         this: *Self,
         comptime id: *const kmp.ident_t,
         out_reduction: anytype,
@@ -191,7 +191,7 @@ pub const ctx = struct {
         in.check_fn_signature_with_ctx(f);
         this.single(.{this} ++ args, f);
     }
-    pub fn single(
+    pub inline fn single(
         this: *Self,
         args: anytype,
         comptime f: anytype,
@@ -213,9 +213,9 @@ pub const ctx = struct {
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
             if (type_info == .ErrorUnion) {
-                res = try @call(.auto, f, args);
+                res = try @call(.always_inline, f, args);
             } else {
-                res = @call(.auto, f, args);
+                res = @call(.always_inline, f, args);
             }
 
             kmp.end_single(&single_id, this.global_tid);
@@ -233,7 +233,7 @@ pub const ctx = struct {
         in.check_fn_signature_with_ctx(f);
         this.master(.{this} ++ args, f);
     }
-    pub fn master(
+    pub inline fn master(
         this: *Self,
         args: anytype,
         comptime f: anytype,
@@ -249,9 +249,9 @@ pub const ctx = struct {
         if (kmp.master(&master_id, this.global_tid) == 1) {
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
             if (type_info == .ErrorUnion) {
-                return try @call(.auto, f, args);
+                return try @call(.always_inline, f, args);
             } else {
-                return @call(.auto, f, args);
+                return @call(.always_inline, f, args);
             }
         }
     }
@@ -268,7 +268,7 @@ pub const ctx = struct {
         in.check_fn_signature_with_ctx(f);
         this.parallel_for(.{this} ++ args, lower, upper, increment, opts, f);
     }
-    pub fn parallel_for(
+    pub inline fn parallel_for(
         this: *Self,
         args: anytype,
         lower: anytype,
@@ -290,7 +290,7 @@ pub const ctx = struct {
 
         const f_type_info = @typeInfo(@TypeOf(f));
         if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != T) {
-            @compileError("Expected function with signature `fn(numeric, ...)` or `fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+            @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
         }
 
         const id = .{
@@ -330,9 +330,9 @@ pub const ctx = struct {
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
             if (type_info == .ErrorUnion) {
-                _ = try @call(.auto, f, new_args);
+                _ = try @call(.always_inline, f, new_args);
             } else {
-                _ = @call(.auto, f, new_args);
+                _ = @call(.always_inline, f, new_args);
             }
         }
 
@@ -343,12 +343,13 @@ pub const ctx = struct {
         };
         kmp.for_static_fini(&id_fini, this.global_tid);
 
+        this.barrier();
         if (in.copy_ret(f) != void) {
             return undefined;
         }
     }
 
-    pub fn barrier(
+    pub inline fn barrier(
         this: *Self,
     ) void {
         const id: kmp.ident_t = .{
@@ -368,7 +369,7 @@ pub const ctx = struct {
         in.check_fn_signature_with_ctx(f);
         this.critical(args, name, sync, f);
     }
-    pub fn critical(
+    pub inline fn critical(
         this: *Self,
         args: anytype,
         comptime name: []const u8,
@@ -393,9 +394,9 @@ pub const ctx = struct {
         const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
         const ret = ret: {
             if (type_info == .ErrorUnion) {
-                break :ret try @call(.auto, f, args);
+                break :ret try @call(.always_inline, f, args);
             } else {
-                break :ret @call(.auto, f, args);
+                break :ret @call(.always_inline, f, args);
             }
         };
         kmp.critical_end(&id, this.global_tid, &static.lock);
@@ -411,7 +412,7 @@ pub const ctx = struct {
         in.check_fn_signature_with_ctx(f);
         this.task(.{this} ++ args, f);
     }
-    pub fn task(
+    pub inline fn task(
         this: *Self,
         args: anytype,
         comptime f: anytype,
@@ -438,7 +439,7 @@ pub const ctx = struct {
         return ret.ret;
     }
 
-    pub fn taskyeild(
+    pub inline fn taskyeild(
         this: *Self,
     ) void {
         const id = .{
@@ -566,23 +567,23 @@ pub const lock = struct {
     const Self = @This();
     _lk: lock_t,
 
-    pub fn init(this: *Self) void {
+    pub inline fn init(this: *Self) void {
         c.omp_init_lock(this._lk);
     }
 
-    pub fn set(this: *Self) void {
+    pub inline fn set(this: *Self) void {
         c.omp_set_lock(this._lk);
     }
 
-    pub fn unset(this: *Self) void {
+    pub inline fn unset(this: *Self) void {
         c.omp_unset_lock(this._lk);
     }
 
-    pub fn destroy(this: *Self) void {
+    pub inline fn destroy(this: *Self) void {
         c.omp_destroy_lock(this._lk);
     }
 
-    pub fn test_(this: *Self) bool {
+    pub inline fn test_(this: *Self) bool {
         return c.omp_test_lock(this._lk) != 0;
     }
 };
@@ -595,23 +596,23 @@ pub const nest_lock = struct {
     const Self = @This();
     _lk: nest_lock_t,
 
-    pub fn init(this: *Self) void {
+    pub inline fn init(this: *Self) void {
         c.omp_init_nest_lock(this._lk);
     }
 
-    pub fn set(this: *Self) void {
+    pub inline fn set(this: *Self) void {
         c.omp_set_nest_lock(this._lk);
     }
 
-    pub fn unset(this: *Self) void {
+    pub inline fn unset(this: *Self) void {
         c.omp_unset_nest_lock(this._lk);
     }
 
-    pub fn destroy(this: *Self) void {
+    pub inline fn destroy(this: *Self) void {
         c.omp_destroy_nest_lock(this._lk);
     }
 
-    pub fn test_(this: *Self) bool {
+    pub inline fn test_(this: *Self) bool {
         return c.omp_test_nest_lock(this._lk) != 0;
     }
 };
@@ -659,23 +660,23 @@ pub inline fn get_initial_device() u32 {
     return @intCast(c.omp_get_initial_device());
 }
 
-fn target_alloc(size: usize, device_num: u32) *u8 {
+inline fn target_alloc(size: usize, device_num: u32) *u8 {
     return c.omp_target_alloc(size, @intCast(device_num));
 }
 
-fn target_free(ptr: *anyopaque, device_num: u32) void {
+inline fn target_free(ptr: *anyopaque, device_num: u32) void {
     c.omp_target_free(ptr, @intCast(device_num));
 }
 
-fn target_is_present(ptr: *anyopaque, device_num: u32) bool {
+inline fn target_is_present(ptr: *anyopaque, device_num: u32) bool {
     return c.omp_target_is_present(ptr, @intCast(device_num)) != 0;
 }
 
-fn target_memcpy(dst: *u8, src: *const u8, length: usize, dst_offset: usize, src_offset: usize, device_num: u32) void {
+inline fn target_memcpy(dst: *u8, src: *const u8, length: usize, dst_offset: usize, src_offset: usize, device_num: u32) void {
     c.omp_target_memcpy(dst, src, length, dst_offset, src_offset, @intCast(device_num));
 }
 
-fn target_memcpy_rect(
+inline fn target_memcpy_rect(
     dst: *u8,
     src: *const u8,
     element_size: usize,
@@ -703,11 +704,11 @@ fn target_memcpy_rect(
     );
 }
 
-fn target_associate_ptr(host_ptr: *const anyopaque, device_ptr: *const anyopaque, size: usize, device_num: u32) void {
+inline fn target_associate_ptr(host_ptr: *const anyopaque, device_ptr: *const anyopaque, size: usize, device_num: u32) void {
     c.omp_target_associate_ptr(host_ptr, device_ptr, size, @intCast(device_num));
 }
 
-fn target_disassociate_ptr(ptr: *const anyopaque, device_num: u32) void {
+inline fn target_disassociate_ptr(ptr: *const anyopaque, device_num: u32) void {
     c.omp_target_disassociate_ptr(ptr, @intCast(device_num));
 }
 
@@ -819,7 +820,7 @@ pub const interop = *opaque {
 ///
 /// The `omp_target_memcpy_async` routine asynchronously performs a copy between any combination of host and device pointers.
 ///
-fn target_memcpy_async(
+inline fn target_memcpy_async(
     dst: *u8,
     src: *const u8,
     length: usize,
@@ -834,7 +835,7 @@ fn target_memcpy_async(
 ///
 /// The `omp_target_memcpy_rect_async` routine asynchronously performs a copy between any combination of host and device pointers.
 ///
-fn target_memcpy_rect_async(
+inline fn target_memcpy_rect_async(
     dst: *u8,
     src: *const u8,
     element_size: usize,
@@ -865,38 +866,38 @@ fn target_memcpy_rect_async(
 }
 
 /// OpenMP 6.0 device memory routines
-pub fn target_memsset(ptr: *u8, value: c_int, size: usize, device_num: c_int) *u8 {
+pub inline fn target_memsset(ptr: *u8, value: c_int, size: usize, device_num: c_int) *u8 {
     return c.omp_target_memset(ptr, value, size, device_num);
 }
-pub fn target_memsset_async(ptr: *u8, value: c_int, size: usize, device_num: c_int, dep: *depend_t) *u8 {
+pub inline fn target_memsset_async(ptr: *u8, value: c_int, size: usize, device_num: c_int, dep: *depend_t) *u8 {
     return c.omp_target_memset_async(ptr, value, size, device_num, dep);
 }
 ///
 /// The `omp_get_mapped_ptr` routine returns the device pointer that is associated with a host pointer for a given device.
 ///
-fn get_mapped_ptr(ptr: *const anyopaque, device_num: c_int) *anyopaque {
+inline fn get_mapped_ptr(ptr: *const anyopaque, device_num: c_int) *anyopaque {
     return c.omp_get_mapped_ptr(ptr, device_num);
 }
 ///
 /// The `omp_target_associate_ptr` routine associates a host pointer with a device pointer.
-fn target_is_accessible(ptr: *const anyopaque, size: usize, device_num: c_int) c_int {
+inline fn target_is_accessible(ptr: *const anyopaque, size: usize, device_num: c_int) c_int {
     return c.omp_target_is_accessible(ptr, size, device_num);
 }
 
 // / kmp API functions
-// extern "c" fn kmp_get_stacksize          (void)int    ;
-// extern "c" fn kmp_set_stacksize          (int)void   ;
-// extern "c" fn kmp_get_stacksize_s        (void)size_t ;
-// extern "c" fn kmp_set_stacksize_s        (size_t)void   ;
-// extern "c" fn kmp_get_blocktime          (void)int    ;
-// extern "c" fn kmp_get_library            (void)int    ;
-// extern "c" fn kmp_set_blocktime          (int)void   ;
-// extern "c" fn kmp_set_library            (int)void   ;
-// extern "c" fn kmp_set_library_serial     (void)void   ;
-// extern "c" fn kmp_set_library_turnaround (void)void   ;
-// extern "c" fn kmp_set_library_throughput (void)void   ;
-// extern "c" fn kmp_set_defaults           (char const *)void   ;
-// extern "c" fn kmp_set_disp_num_buffers   (int)void   ;
+// extern "c" inline fn kmp_get_stacksize          (void)int    ;
+// extern "c" inline fn kmp_set_stacksize          (int)void   ;
+// extern "c" inline fn kmp_get_stacksize_s        (void)size_t ;
+// extern "c" inline fn kmp_set_stacksize_s        (size_t)void   ;
+// extern "c" inline fn kmp_get_blocktime          (void)int    ;
+// extern "c" inline fn kmp_get_library            (void)int    ;
+// extern "c" inline fn kmp_set_blocktime          (int)void   ;
+// extern "c" inline fn kmp_set_library            (int)void   ;
+// extern "c" inline fn kmp_set_library_serial     (void)void   ;
+// extern "c" inline fn kmp_set_library_turnaround (void)void   ;
+// extern "c" inline fn kmp_set_library_throughput (void)void   ;
+// extern "c" inline fn kmp_set_defaults           (char const *)void   ;
+// extern "c" inline fn kmp_set_disp_num_buffers   (int)void   ;
 // //
 // //     /* Intel affinity API */
 // //     typedef void * kmp_affinity_mask_t;

@@ -184,7 +184,7 @@ pub const kmp_task_t = extern struct {
     data2: kmp_routine_entry_t,
 };
 
-fn task_outline(comptime f: anytype, comptime ret_type: type) type {
+inline fn task_outline(comptime f: anytype, comptime ret_type: type) type {
     return opaque {
         /// This comes from decompiling the outline with ghidra
         /// It should never really change since it's just a wrapper around the actual function
@@ -192,15 +192,15 @@ fn task_outline(comptime f: anytype, comptime ret_type: type) type {
         ///
         /// remember to update the size_in_release_debug if the function changes, can't really enforce it though
         const size_in_release_debug = 42;
-        fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
+        noinline fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
             _ = gtid;
 
             // TODO: CHECK WITH GHIDRA THE NEW SIZE
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
             if (type_info == .ErrorUnion) {
-                pass.ret = try @call(.auto, f, pass.args);
+                pass.ret = try @call(.never_inline, f, pass.args);
             } else {
-                pass.ret = @call(.auto, f, pass.args);
+                pass.ret = @call(.never_inline, f, pass.args);
             }
             return 0;
         }
@@ -265,7 +265,7 @@ pub const reduction_operators = enum(c_int) {
     min = 9,
 };
 
-pub fn create_reduce(
+pub inline fn create_reduce(
     comptime types: []const std.builtin.Type.StructField,
     comptime reduce_operators: []const reduction_operators,
 ) type {
@@ -274,7 +274,7 @@ pub fn create_reduce(
     }
 
     return struct {
-        pub fn finalize(
+        pub inline fn finalize(
             lhs: anytype,
             rhs: @TypeOf(lhs),
         ) void {
