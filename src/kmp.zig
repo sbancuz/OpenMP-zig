@@ -369,13 +369,6 @@ pub fn create_reduce(
     };
 }
 
-fn foo(comptime T: type) type {
-    _ = T;
-    return struct {
-        lck: critical_name_t,
-    };
-}
-
 extern "C" fn __kmpc_reduce_nowait(
     loc: *const ident_t,
     global_tid: c_int,
