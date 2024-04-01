@@ -4,21 +4,24 @@ An implementation of the OpenMP directives for Zig
 ## !!! This implementation is incomplete and highly experimental
 
 To support:
-- [p] `worksharing constructs` (only shared and privates for parallel region)
+- [x] `worksharing constructs` 
 - [x] `error return types from directives`
 - [x] `early return from directives`
 - [x] `#pragma omp parallel`
-- [p] `#pragma omp for` (extremely limited for now)
+- [x] `#pragma omp for` (missing only schedules I believe)
 - [ ] `#pragma omp sections`
 - [ ] `#pragma omp section`
 - [x] `#pragma omp single`
 - [x] `#pragma omp master`
 - [x] `#pragma omp critical`
 - [x] `#pragma omp barrier`
-- [p] `#pragma omp task` (extremely limited for now, no dependencies)
-- [ ] `proper testing`
+- [x] `#pragma omp task` (extremely limited for now, no dependencies)
+- [ ] `proper testing` (WIP)
 
 ## Usage
+
+!!! Outdated, since the API will change frequently and I don't want to update this README every time please refer to the test folder for some up to date examples
+
 ```zig
 const omp = @import("omp.zig");
 const std = @import("std");
