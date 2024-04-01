@@ -93,6 +93,10 @@ pub const ctx = struct {
         comptime f: anytype,
         comptime red_opts: []const reduction_operators,
     ) type {
+        const static = struct {
+            var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+        };
+
         return opaque {
             fn outline_ctx(
                 gtid: *c_int,
@@ -115,12 +119,11 @@ pub const ctx = struct {
                 }
 
                 if (red_opts.len > 0) {
-                    var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
                     const id = .{
                         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                         .psource = "parallel" ++ @typeName(@TypeOf(f)),
                     };
-                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &lck);
+                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &static.lck);
                 }
 
                 return;
@@ -147,12 +150,11 @@ pub const ctx = struct {
                 }
 
                 if (red_opts.len > 0) {
-                    var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
                     const id = .{
                         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                         .psource = "parallel" ++ @typeName(@TypeOf(f)),
                     };
-                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &lck);
+                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &static.lck);
                 }
 
                 return;
@@ -173,16 +175,12 @@ pub const ctx = struct {
             @panic("Atomic reduce not implemented");
         }
 
-        if (res == 1) {
-            kmp.end_reduce_nowait(id, this.global_tid, lck);
-            inline for (out_reduction, copies) |og, v| {
-                if (@typeInfo(@TypeOf(og)) == .Pointer) {
-                    og.* = v.*;
-                } else {
-                    og = v;
-                }
-            }
+        if (res == 0) {
+            return;
         }
+
+        kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
+        kmp.end_reduce_nowait(id, this.global_tid, lck);
     }
 
     pub inline fn single_ctx(
@@ -344,9 +342,6 @@ pub const ctx = struct {
             .reserved_3 = 0x1b,
         };
         kmp.for_static_fini(&id_fini, this.global_tid);
-
-        // Figure out a way to not use this when not needed
-        kmp.barrier(&id, this.global_tid);
 
         if (in.copy_ret(f) != void) {
             return undefined;

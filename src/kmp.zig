@@ -265,7 +265,7 @@ pub const reduction_operators = enum(c_int) {
     min = 9,
 };
 
-fn create_reduce(
+pub fn create_reduce(
     comptime types: []const std.builtin.Type.StructField,
     comptime reduce_operators: []const reduction_operators,
 ) type {
@@ -274,8 +274,53 @@ fn create_reduce(
     }
 
     return struct {
-        lck: critical_name_t = @bitCast([_]u8{0} ** 32),
-        fn f(lhs: *anyopaque, rhs: *anyopaque) callconv(.C) void {
+        pub fn finalize(
+            lhs: anytype,
+            rhs: @TypeOf(lhs),
+        ) void {
+            inline for (lhs, rhs) |l, r| {
+                inline for (reduce_operators, types) |op, T| {
+                    _ = T;
+                    switch (op) {
+                        .plus => {
+                            l.* += r.*;
+                        },
+                        .mult => {
+                            l.* *= r.*;
+                        },
+                        .minus => {
+                            l.* -= r.*;
+                        },
+                        .bitwise_and => {
+                            l.* &= r.*;
+                        },
+                        .bitwise_or => {
+                            l.* |= r.*;
+                        },
+                        .bitwise_xor => {
+                            l.* ^= r.*;
+                        },
+                        .logical_and => {
+                            l.* = l.* and r.*;
+                        },
+                        .logical_or => {
+                            l.* = l.* or r.*;
+                        },
+                        .max => {
+                            l.* = @max(l.*, r.*);
+                        },
+                        .min => {
+                            l.* = @min(l.*, r.*);
+                        },
+                    }
+                }
+            }
+        }
+
+        fn f(
+            lhs: *anyopaque,
+            rhs: *anyopaque,
+        ) callconv(.C) void {
             inline for (reduce_operators, types) |op, T| {
                 switch (op) {
                     .plus => {
@@ -310,20 +355,13 @@ fn create_reduce(
                         var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = l.* or @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
-                    // TODO: Use builtins
                     .max => {
                         var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        var r = @as(*T.type, @ptrCast(@alignCast(rhs))).*;
-                        if (l.* < r.*) {
-                            l.* = r.*;
-                        }
+                        l.* = @max(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
                     },
                     .min => {
                         var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        var r = @as(*T.type, @ptrCast(@alignCast(rhs))).*;
-                        if (l.* > r.*) {
-                            l.* = r.*;
-                        }
+                        l.* = @min(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
                     },
                 }
             }
