@@ -37,22 +37,20 @@ pub fn parallel(comptime opts: parallel_opts) type {
             return .{ .v = in.normalize_args(args) };
         }
     };
-    if (opts.ctx) {
+    if (opts.iff) {
         return struct {
             pub inline fn run(
+                cond: bool,
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
                 in.check_fn_signature(f);
 
                 const ret = common.make_args(args, f);
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
-                const outline = ctx.parallel_outline(f, @TypeOf(ret), opts.reduction, true).outline;
+                const id = common.id(f);
+                const outline = ctx.parallel_outline(f, @TypeOf(ret), opts).outline;
 
-                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
+                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
 
                 return ret.ret;
             }
@@ -66,8 +64,11 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 in.check_fn_signature(f);
 
                 const ret = common.make_args(args, f);
-                const id = common.id(f);
-                const outline = ctx.parallel_outline(f, @TypeOf(ret), opts.reduction, true).outline;
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                const outline = ctx.parallel_outline(f, @TypeOf(ret), opts).outline;
 
                 kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
 
@@ -86,80 +87,44 @@ pub const ctx = struct {
     inline fn parallel_outline(
         comptime f: anytype,
         comptime R: type,
-        comptime red_opts: []const reduction_operators,
-        comptime use_ctx: bool,
+        comptime opts: parallel_opts,
     ) type {
         const static = struct {
             var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
         };
 
-        if (use_ctx) {
-            return opaque {
-                fn outline(
-                    gtid: *c_int,
-                    btid: *c_int,
-                    args: *R,
-                ) callconv(.C) void {
-                    var this: Self = .{
-                        .global_tid = gtid.*,
-                        .bound_tid = btid.*,
-                    };
+        return opaque {
+            fn outline(
+                gtid: *c_int,
+                btid: *c_int,
+                args: *R,
+            ) callconv(.C) void {
+                var this: Self = .{
+                    .global_tid = gtid.*,
+                    .bound_tid = btid.*,
+                };
 
-                    var private_copy = in.deep_copy(args.v.private);
-                    var reduction_copy = in.deep_copy(args.v.reduction);
-                    const true_args = args.v.shared ++ private_copy ++ reduction_copy;
+                var private_copy = in.deep_copy(args.v.private);
+                var reduction_copy = in.deep_copy(args.v.reduction);
+                const true_args = args.v.shared ++ private_copy ++ reduction_copy;
 
-                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
-                        args.ret = @call(.always_inline, f, .{&this} ++ true_args) catch |err| err;
-                    } else {
-                        args.ret = @call(.always_inline, f, .{&this} ++ true_args);
-                    }
-
-                    if (red_opts.len > 0) {
-                        const id: kmp.ident_t = .{
-                            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                            .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                        };
-                        this.reduce(&id, args.v.reduction, reduction_copy, red_opts, &static.lck);
-                    }
-
-                    return;
+                if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                    args.ret = @call(.always_inline, f, if (opts.use_ctx) .{&this} ++ true_args else true_args) catch |err| err;
+                } else {
+                    args.ret = @call(.always_inline, f, if (opts.use_ctx) .{&this} ++ true_args else true_args);
                 }
-            };
-        } else {
-            return opaque {
-                fn outline(
-                    gtid: *c_int,
-                    btid: *c_int,
-                    argss: *R,
-                ) callconv(.C) void {
-                    var this: Self = .{
-                        .global_tid = gtid.*,
-                        .bound_tid = btid.*,
+
+                if (opts.red_opts.len > 0) {
+                    const id: kmp.ident_t = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
                     };
-
-                    var private_copy = in.deep_copy(argss.args.private);
-                    var reduction_copy = in.deep_copy(argss.args.reduction);
-                    var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
-
-                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
-                        argss.ret = @call(.always_inline, f, true_args) catch |err| err;
-                    } else {
-                        argss.ret = @call(.always_inline, f, true_args);
-                    }
-
-                    if (red_opts.len > 0) {
-                        const id: kmp.ident_t = .{
-                            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                            .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                        };
-                        this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &static.lck);
-                    }
-
-                    return;
+                    this.reduce(&id, args.v.reduction, reduction_copy, opts.red_opts, &static.lck);
                 }
-            };
-        }
+
+                return;
+            }
+        };
     }
 
     inline fn reduce(
