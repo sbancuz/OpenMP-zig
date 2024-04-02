@@ -14,6 +14,21 @@ fn get_field_idx(comptime T: type, comptime field_name: []const u8) u32 {
     };
 }
 
+pub fn zigc_ret(comptime f: anytype, comptime args_type: type) type {
+    const f_type_info = @typeInfo(@TypeOf(f));
+    if (f_type_info != .Fn) {
+        @compileError("Expected function with signature `fn(, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+    }
+    return struct {
+        ret: copy_ret(f) = undefined,
+        v: args_type = undefined,
+    };
+}
+
+pub fn copy_ret(comptime f: anytype) type {
+    return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
+}
+
 fn normalize_type(comptime T: type) type {
     var param_count: u32 = 0;
     const fields = @typeInfo(T).Struct.fields;
@@ -108,10 +123,6 @@ pub fn check_args(comptime T: type) void {
     if (args_type_info != .Struct) {
         @compileError("Expected struct or tuple, got " ++ @typeName(T) ++ " instead.");
     }
-}
-
-pub fn copy_ret(comptime f: anytype) type {
-    return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
 }
 
 pub fn deep_size_of(comptime T: type) usize {
