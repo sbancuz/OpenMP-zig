@@ -1,4 +1,5 @@
 const std = @import("std");
+const omp = @import("omp2.zig");
 
 pub const ident_flags = enum(c_int) {
     // /*! Use trampoline for internal microtasks */
@@ -396,4 +397,9 @@ pub inline fn reduce_nowait(
 extern "C" fn __kmpc_end_reduce_nowait(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
 pub inline fn end_reduce_nowait(comptime loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void {
     __kmpc_end_reduce_nowait(loc, global_tid, lck);
+}
+
+extern "C" fn __kmpc_push_proc_bind(loc: *const ident_t, global_tid: c_int, proc_bind: c_int) void;
+pub inline fn push_proc_bind(comptime loc: *const ident_t, global_tid: c_int, proc_bind: omp.proc_bind) void {
+    __kmpc_push_proc_bind(loc, global_tid, @intFromEnum(proc_bind));
 }

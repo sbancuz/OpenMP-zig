@@ -7,11 +7,11 @@ const c = @cImport({
 
 const in = @import("input_handler.zig");
 pub const proc_bind = enum(c_int) {
-    default,
-    primary,
-    master,
-    close,
-    spread,
+    default = 1,
+    master = 2,
+    close = 3,
+    spread = 4,
+    primary = 5,
 };
 
 pub const reduction_operators = kmp.reduction_operators;
@@ -36,6 +36,15 @@ pub fn parallel(comptime opts: parallel_opts) type {
 
             return .{ .v = in.normalize_args(args) };
         }
+
+        inline fn make_proc_bind(
+            id: *const kmp.ident_t,
+            comptime bind: proc_bind,
+        ) void {
+            if (bind != .default) {
+                kmp.push_proc_bind(id, kmp.get_tid(), bind);
+            }
+        }
     };
     if (opts.iff) {
         return struct {
@@ -47,7 +56,11 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 in.check_fn_signature(f);
 
                 const ret = common.make_args(args, f);
-                const id = common.id(f);
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                common.make_proc_bind(&id, opts.proc_bind);
                 const outline = ctx.parallel_outline(f, @TypeOf(ret), opts).outline;
 
                 kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
@@ -68,6 +81,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                     .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
+                common.make_proc_bind(&id, opts.proc_bind);
                 const outline = ctx.parallel_outline(f, @TypeOf(ret), opts).outline;
 
                 kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
@@ -109,12 +123,12 @@ pub const ctx = struct {
                 const true_args = args.v.shared ++ private_copy ++ reduction_copy;
 
                 if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
-                    args.ret = @call(.always_inline, f, if (opts.use_ctx) .{&this} ++ true_args else true_args) catch |err| err;
+                    args.ret = @call(.always_inline, f, if (opts.ctx) .{&this} ++ true_args else true_args) catch |err| err;
                 } else {
-                    args.ret = @call(.always_inline, f, if (opts.use_ctx) .{&this} ++ true_args else true_args);
+                    args.ret = @call(.always_inline, f, if (opts.ctx) .{&this} ++ true_args else true_args);
                 }
 
-                if (opts.red_opts.len > 0) {
+                if (opts.reduction.len > 0) {
                     const id: kmp.ident_t = .{
                         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                         .psource = "parallel" ++ @typeName(@TypeOf(f)),
