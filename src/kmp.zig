@@ -101,6 +101,84 @@ pub inline fn for_static_fini(comptime name: *const ident_t, global_tid: c_int) 
     __kmpc_for_static_fini(name, global_tid);
 }
 
+extern "C" fn __kmpc_dispatch_init_4(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_int, ub: c_int, st: c_int, chunk: c_int) void;
+extern "C" fn __kmpc_dispatch_init_4u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_uint, ub: c_uint, st: c_int, chunk: c_int) void;
+extern "C" fn __kmpc_dispatch_init_8(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_long, ub: c_long, st: c_long, chunk: c_long) void;
+extern "C" fn __kmpc_dispatch_init_8u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_ulong, ub: c_ulong, st: c_long, chunk: c_long) void;
+pub inline fn dispatch_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedule: sched_t, lb: T, ub: T, st: T, chunk: T) void {
+    if (std.meta.trait.isSignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            __kmpc_dispatch_init_4(loc, gtid, @intFromEnum(schedule), @intCast(lb), @intCast(ub), @intCast(st), @intCast(chunk));
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            __kmpc_dispatch_init_8(loc, gtid, @intFromEnum(schedule), @intCast(lb), @intCast(ub), @intCast(st), @intCast(chunk));
+        } else {
+            @compileError("Unsupported integer size");
+        }
+    } else if (std.meta.trait.isUnsignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            __kmpc_dispatch_init_4u(loc, gtid, @intFromEnum(schedule), @intCast(lb), @intCast(ub), @intCast(st), @intCast(chunk));
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            __kmpc_dispatch_init_8u(loc, gtid, @intFromEnum(schedule), @intCast(lb), @intCast(ub), @intCast(st), @intCast(chunk));
+        } else {
+            @compileError("Unsupported unsigned integer size");
+        }
+    } else {
+        unreachable;
+    }
+}
+
+extern "C" fn __kmpc_dispatch_next_4(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_int, p_ub: *c_int, p_st: *c_int) c_int;
+extern "C" fn __kmpc_dispatch_next_4u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_uint, p_ub: *c_uint, p_st: *c_int) c_int;
+extern "C" fn __kmpc_dispatch_next_8(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_long, p_ub: *c_long, p_st: *c_long) c_int;
+extern "C" fn __kmpc_dispatch_next_8u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_ulong, p_ub: *c_ulong, p_st: *c_long) c_int;
+pub inline fn dispatch_next(comptime T: type, comptime loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *T, p_ub: *T, p_st: *T) c_int {
+    if (std.meta.trait.isSignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            return __kmpc_dispatch_next_4(loc, gtid, p_last, @ptrCast(p_lb), @ptrCast(p_ub), @ptrCast(p_st));
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            return __kmpc_dispatch_next_8(loc, gtid, p_last, @ptrCast(p_lb), @ptrCast(p_ub), @ptrCast(p_st));
+        } else {
+            @compileError("Unsupported integer size");
+        }
+    } else if (std.meta.trait.isUnsignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            return __kmpc_dispatch_next_4u(loc, gtid, p_last, @ptrCast(p_lb), @ptrCast(p_ub), @ptrCast(p_st));
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            return __kmpc_dispatch_next_8u(loc, gtid, p_last, @ptrCast(p_lb), @ptrCast(p_ub), @ptrCast(p_st));
+        } else {
+            @compileError("Unsupported unsigned integer size");
+        }
+    } else {
+        unreachable;
+    }
+}
+
+extern "C" fn __kmpc_dispatch_fini_4(loc: *const ident_t, gtid: c_int) void;
+extern "C" fn __kmpc_dispatch_fini_4u(loc: *const ident_t, gtid: c_int) void;
+extern "C" fn __kmpc_dispatch_fini_8(loc: *const ident_t, gtid: c_int) void;
+extern "C" fn __kmpc_dispatch_fini_8u(loc: *const ident_t, gtid: c_int) void;
+pub inline fn dispatch_fini(comptime T: type, comptime loc: *const ident_t, gtid: c_int) void {
+    if (std.meta.trait.isSignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            __kmpc_dispatch_fini_4(loc, gtid);
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            __kmpc_dispatch_fini_8(loc, gtid);
+        } else {
+            @compileError("Unsupported integer size");
+        }
+    } else if (std.meta.trait.isUnsignedInt(T)) {
+        if (@typeInfo(T).Int.bits <= 32) {
+            __kmpc_dispatch_fini_4u(loc, gtid);
+        } else if (@typeInfo(T).Int.bits <= 64) {
+            __kmpc_dispatch_fini_8u(loc, gtid);
+        } else {
+            @compileError("Unsupported unsigned integer size");
+        }
+    } else {
+        unreachable;
+    }
+}
+
 extern "C" fn __kmpc_master(loc: *const ident_t, global_tid: c_int) c_int;
 pub inline fn master(comptime name: *const ident_t, global_tid: c_int) c_int {
     return __kmpc_master(name, global_tid);

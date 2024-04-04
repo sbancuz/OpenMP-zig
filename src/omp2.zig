@@ -166,7 +166,7 @@ pub inline fn loop(
     if (!std.meta.trait.isSignedInt(index_type) and !std.meta.trait.isUnsignedInt(index_type)) {
         @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(index_type));
     }
-    if (!opts.ordered) {
+    if (!opts.ordered and opts.sched != kmp.sched_t.StaticChunked) {
         return struct {
             pub inline fn run(
                 p: ctx,
@@ -200,19 +200,19 @@ pub inline fn loop(
                 kmp.for_static_init(index_type, &id, p.global_tid, opts.sched, &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-                while (@atomicLoad(index_type, &low, .Acquire) <= upp) {
-                    // TODO: Figure out how to pass the result without chekcing each iteration
+                var i: index_type = low;
+                while (i <= upp) : (i += incr) {
                     if (type_info == .ErrorUnion) {
                         _ = @call(
                             .always_inline,
                             f,
-                            if (opts.ctx) .{ p, @atomicRmw(index_type, &low, .Add, incr, .Release) } ++ args else .{@atomicRmw(index_type, &low, .Add, incr, .Release)} ++ args,
+                            if (opts.ctx) .{ p, i } ++ args else .{i} ++ args,
                         ) catch |err| err;
                     } else {
                         _ = @call(
                             .always_inline,
                             f,
-                            if (opts.ctx) .{ p, @atomicRmw(index_type, &low, .Add, incr, .Release) } ++ args else .{@atomicRmw(index_type, &low, .Add, incr, .Release)} ++ args,
+                            if (opts.ctx) .{ p, i } ++ args else .{i} ++ args,
                         );
                     }
                 }
@@ -230,7 +230,62 @@ pub inline fn loop(
             }
         };
     } else {
-        @compileError("Ordered parallel for not implemented");
+        return struct {
+            pub inline fn run(
+                p: ctx,
+                lower: index_type,
+                upper: index_type,
+                increment: index_type,
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_args(@TypeOf(args));
+
+                in.check_fn_signature(f);
+
+                const f_type_info = @typeInfo(@TypeOf(f));
+                if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != index_type) {
+                    @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(index_type) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                }
+
+                const id = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                };
+
+                // This is `1` iside the last thread execution
+                var last_iter: c_int = 0;
+                var low: index_type = lower;
+                var upp: index_type = upper - 1;
+                var stri: index_type = 1;
+                var incr: index_type = increment;
+                kmp.dispatch_init(index_type, &id, p.global_tid, opts.sched, low, upp, incr, opts.chunk_size);
+
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+                while (kmp.dispatch_next(index_type, &id, p.global_tid, &last_iter, &low, &upp, &stri) == 1) {
+                    var i: index_type = low;
+                    while (i <= upp) : (i += incr) {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(
+                                .always_inline,
+                                f,
+                                if (opts.ctx) .{ p, i } ++ args else .{i} ++ args,
+                            ) catch |err| err;
+                        } else {
+                            _ = @call(
+                                .always_inline,
+                                f,
+                                if (opts.ctx) .{ p, i } ++ args else .{i} ++ args,
+                            );
+                        }
+                    }
+                    kmp.dispatch_fini(index_type, &id, p.global_tid);
+                }
+                p.barrier();
+
+                return undefined;
+            }
+        };
     }
 }
 
