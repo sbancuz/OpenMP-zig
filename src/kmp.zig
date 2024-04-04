@@ -74,20 +74,20 @@ extern "C" fn __kmpc_for_static_init_4(loc: *const ident_t, gtid: c_int, schedty
 extern "C" fn __kmpc_for_static_init_4u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_uint, pupper: *c_uint, pstride: *c_int, incr: c_int, chunk: c_int) void;
 extern "C" fn __kmpc_for_static_init_8(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_long, pupper: *c_long, pstride: *c_long, incr: c_long, chunk: c_long) void;
 extern "C" fn __kmpc_for_static_init_8u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_ulong, pupper: *c_ulong, pstride: *c_long, incr: c_long, chunk: c_long) void;
-pub inline fn for_static_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *T, pupper: *T, pstride: *T, incr: T, chunk: T) void {
+pub inline fn for_static_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedtype: sched_t, plastiter: *c_int, plower: *T, pupper: *T, pstride: *T, incr: T, chunk: T) void {
     if (std.meta.trait.isSignedInt(T)) {
         if (@typeInfo(T).Int.bits <= 32) {
-            __kmpc_for_static_init_4(loc, gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+            __kmpc_for_static_init_4(loc, gtid, @intFromEnum(schedtype), plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
         } else if (@typeInfo(T).Int.bits <= 64) {
-            __kmpc_for_static_init_8(loc, gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+            __kmpc_for_static_init_8(loc, gtid, @intFromEnum(schedtype), plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
         } else {
             @compileError("Unsupported integer size");
         }
     } else if (std.meta.trait.isUnsignedInt(T)) {
         if (@typeInfo(T).Int.bits <= 32) {
-            __kmpc_for_static_init_4u(loc, gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+            __kmpc_for_static_init_4u(loc, gtid, @intFromEnum(schedtype), plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
         } else if (@typeInfo(T).Int.bits <= 64) {
-            __kmpc_for_static_init_8u(loc, gtid, schedtype, plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
+            __kmpc_for_static_init_8u(loc, gtid, @intFromEnum(schedtype), plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
         } else {
             @compileError("Unsupported unsigned integer size");
         }
@@ -280,8 +280,7 @@ pub inline fn create_reduce(
             rhs: @TypeOf(lhs),
         ) void {
             inline for (lhs, rhs) |l, r| {
-                inline for (reduce_operators, types) |op, T| {
-                    _ = T;
+                inline for (reduce_operators) |op| {
                     switch (op) {
                         .plus => {
                             l.* += r.*;

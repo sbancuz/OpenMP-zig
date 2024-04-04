@@ -99,7 +99,6 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
     return .{ .shared = shared, .private = private, .reduction = reduction };
 }
 
-// TODO: Remove the need for the `ctx` argument, maybe the user doesn't want to use it
 pub fn check_fn_signature(comptime f: anytype) void {
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {
