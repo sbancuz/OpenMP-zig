@@ -32,8 +32,8 @@ pub const parallel_opts = struct {
 pub const parallel_for_opts = struct {
     ctx: bool = false,
     sched: schedule = .static,
-    ordered: bool = false,
     chunk_size: c_int = 1,
+    ordered: bool = false,
     reduction: []const reduction_operators = &[0]reduction_operators{},
     nowait: bool = false,
 };
@@ -188,8 +188,7 @@ pub inline fn loop(
     const common = struct {
         pub fn to_kmp_sched(comptime sched: schedule) kmp.sched_t {
             switch (sched) {
-                // TODO: There is also monotonic and staticNonChunked, need to investigate further
-                .static => return kmp.sched_t.StaticNonChunked,
+                .static => return if (opts.chunk_size > 1) kmp.sched_t.StaticChunked else kmp.sched_t.StaticNonChunked,
                 .dynamic => return kmp.sched_t.Dynamic,
                 .guided => return kmp.sched_t.Guided,
                 .auto => return kmp.sched_t.Runtime,
@@ -201,7 +200,7 @@ pub inline fn loop(
     if (!std.meta.trait.isSignedInt(index_type) and !std.meta.trait.isUnsignedInt(index_type)) {
         @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(index_type));
     }
-    if (!opts.ordered and opts.sched != .static) {
+    if (!opts.ordered and opts.sched == .static) {
         return struct {
             pub inline fn run(
                 lower: index_type,
@@ -250,12 +249,31 @@ pub inline fn loop(
                 }
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-                var i: index_type = low;
-                while (i <= upp) : (i += incr) {
-                    if (type_info == .ErrorUnion) {
-                        _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
-                    } else {
-                        _ = @call(.always_inline, f, .{i} ++ true_args);
+                if (opts.chunk_size > 1) {
+                    while (low + opts.chunk_size < upper) : (low += stri) {
+                        inline for (0..opts.chunk_size) |i| {
+                            if (type_info == .ErrorUnion) {
+                                _ = @call(.always_inline, f, .{low + @as(index_type, i)} ++ true_args) catch |err| err;
+                            } else {
+                                _ = @call(.always_inline, f, .{low + @as(index_type, i)} ++ true_args);
+                            }
+                        }
+                    }
+                    while (low < upper) : (low += incr) {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(.always_inline, f, .{low} ++ true_args) catch |err| err;
+                        } else {
+                            _ = @call(.always_inline, f, .{low} ++ true_args);
+                        }
+                    }
+                } else {
+                    var i: index_type = low;
+                    while (i <= upp) : (i += incr) {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
+                        } else {
+                            _ = @call(.always_inline, f, .{i} ++ true_args);
+                        }
                     }
                 }
 
