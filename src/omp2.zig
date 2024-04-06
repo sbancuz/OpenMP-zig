@@ -34,6 +34,7 @@ pub const parallel_for_opts = struct {
     sched: schedule = .static,
     ordered: bool = false,
     chunk_size: c_int = 1,
+    reduction: []const reduction_operators = &[0]reduction_operators{},
 };
 pub const ctx = struct {
     global_tid: c_int,
@@ -180,6 +181,9 @@ pub inline fn loop(
     comptime index_type: type,
     comptime opts: parallel_for_opts,
 ) type {
+    const static = struct {
+        var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+    };
     const common = struct {
         pub fn to_kmp_sched(comptime sched: schedule) kmp.sched_t {
             switch (sched) {
@@ -206,6 +210,11 @@ pub inline fn loop(
                 comptime f: anytype,
             ) in.copy_ret(f) {
                 in.check_args(@TypeOf(args));
+
+                const splat = in.normalize_args(args);
+                var private_copy = in.deep_copy(splat.private);
+                var reduction_copy = in.deep_copy(splat.reduction);
+                const true_args = splat.shared ++ private_copy ++ reduction_copy;
 
                 in.check_fn_signature(f);
 
@@ -241,10 +250,18 @@ pub inline fn loop(
                 var i: index_type = low;
                 while (i <= upp) : (i += incr) {
                     if (type_info == .ErrorUnion) {
-                        _ = @call(.always_inline, f, .{i} ++ args) catch |err| err;
+                        _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
                     } else {
-                        _ = @call(.always_inline, f, .{i} ++ args);
+                        _ = @call(.always_inline, f, .{i} ++ true_args);
                     }
+                }
+
+                if (opts.reduction.len > 0) {
+                    const redid: kmp.ident_t = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                    };
+                    reduce(&redid, splat.reduction, reduction_copy, opts.reduction, &static.lck);
                 }
 
                 return undefined;
@@ -260,6 +277,11 @@ pub inline fn loop(
                 comptime f: anytype,
             ) in.copy_ret(f) {
                 in.check_args(@TypeOf(args));
+
+                const splat = in.normalize_args(args);
+                var private_copy = in.deep_copy(splat.private);
+                var reduction_copy = in.deep_copy(splat.reduction);
+                const true_args = splat.shared ++ private_copy ++ reduction_copy;
 
                 in.check_fn_signature(f);
 
@@ -289,11 +311,18 @@ pub inline fn loop(
                     var i: index_type = low;
                     while (i <= upp) : (i += incr) {
                         if (type_info == .ErrorUnion) {
-                            _ = @call(.always_inline, f, .{i} ++ args) catch |err| err;
+                            _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
                         } else {
-                            _ = @call(.always_inline, f, .{i} ++ args);
+                            _ = @call(.always_inline, f, .{i} ++ true_args);
                         }
                     }
+                }
+                if (opts.reduction.len > 0) {
+                    const redid: kmp.ident_t = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                    };
+                    reduce(&redid, splat.reduction, reduction_copy, opts.reduction, &static.lck);
                 }
 
                 return undefined;

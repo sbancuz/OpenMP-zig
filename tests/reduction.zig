@@ -10,7 +10,7 @@ fn test_omp_parallel_default_reduction() bool {
         .reduction = &.{.plus},
     }).run(.{ .reduction = .{&sum} }, struct {
         fn f(f_sum: *u32) void {
-            omp.loop(u32, .{}).run(1, 1000 + 1, 1, .{f_sum}, struct {
+            omp.loop(u32, .{}).run(1, 1000 + 1, 1, .{ .shared = .{f_sum} }, struct {
                 fn f(i: u32, ff_sum: *u32) void {
                     ff_sum.* += i;
                 }
