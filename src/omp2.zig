@@ -35,6 +35,7 @@ pub const parallel_for_opts = struct {
     ordered: bool = false,
     chunk_size: c_int = 1,
     reduction: []const reduction_operators = &[0]reduction_operators{},
+    nowait: bool = false,
 };
 pub const ctx = struct {
     global_tid: c_int,
@@ -243,7 +244,9 @@ pub inline fn loop(
                         .reserved_3 = 0x1b,
                     };
                     kmp.for_static_fini(&id_fini, global_ctx.global_tid);
-                    barrier();
+                    if (!opts.nowait) {
+                        barrier();
+                    }
                 }
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
@@ -302,7 +305,11 @@ pub inline fn loop(
                 var stri: index_type = 1;
                 var incr: index_type = increment;
                 kmp.dispatch_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
-                defer barrier();
+                defer {
+                    if (!opts.nowait) {
+                        barrier();
+                    }
+                }
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
                 while (kmp.dispatch_next(index_type, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
