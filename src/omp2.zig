@@ -14,6 +14,14 @@ pub const proc_bind = enum(c_int) {
     primary = 5,
 };
 
+pub const schedule = enum(c_long) {
+    static = 1,
+    dynamic = 2,
+    guided = 3,
+    auto = 4,
+    monotonic = 0x80000000,
+};
+
 pub const reduction_operators = kmp.reduction_operators;
 pub const parallel_opts = struct {
     iff: bool = false,
@@ -23,8 +31,7 @@ pub const parallel_opts = struct {
 
 pub const parallel_for_opts = struct {
     ctx: bool = false,
-    // TODO: Use public API to set the schedule
-    sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
+    sched: schedule = .static,
     ordered: bool = false,
     chunk_size: c_int = 1,
 };
@@ -173,10 +180,23 @@ pub inline fn loop(
     comptime index_type: type,
     comptime opts: parallel_for_opts,
 ) type {
+    const common = struct {
+        pub fn to_kmp_sched(comptime sched: schedule) kmp.sched_t {
+            switch (sched) {
+                // TODO: There is also monotonic and staticNonChunked, need to investigate further
+                .static => return kmp.sched_t.StaticNonChunked,
+                .dynamic => return kmp.sched_t.Dynamic,
+                .guided => return kmp.sched_t.Guided,
+                .auto => return kmp.sched_t.Runtime,
+                else => unreachable,
+            }
+        }
+    };
+
     if (!std.meta.trait.isSignedInt(index_type) and !std.meta.trait.isUnsignedInt(index_type)) {
         @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(index_type));
     }
-    if (!opts.ordered and opts.sched != kmp.sched_t.StaticChunked) {
+    if (!opts.ordered and opts.sched != .static) {
         return struct {
             pub inline fn run(
                 lower: index_type,
@@ -206,7 +226,7 @@ pub inline fn loop(
                 var stri: index_type = 1;
                 const incr: index_type = increment;
 
-                kmp.for_static_init(index_type, &id, global_ctx.global_tid, opts.sched, &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
+                kmp.for_static_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
                 defer {
                     const id_fini = .{
                         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
@@ -259,7 +279,7 @@ pub inline fn loop(
                 var upp: index_type = upper - 1;
                 var stri: index_type = 1;
                 var incr: index_type = increment;
-                kmp.dispatch_init(index_type, &id, global_ctx.global_tid, opts.sched, low, upp, incr, opts.chunk_size);
+                kmp.dispatch_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
                 defer barrier();
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
@@ -329,13 +349,6 @@ pub inline fn critical(
     };
 }
 
-pub const sched_t = enum(c_int) {
-    static = 1,
-    dynamic = 2,
-    guided = 3,
-    auto = 4,
-    monotonic = 0x80000000,
-};
 /// Setters
 pub inline fn set_num_threads(num_threads: u32) void {
     c.omp_set_num_threads(@intCast(num_threads));
@@ -353,8 +366,8 @@ pub inline fn set_max_active_levels(max_levels: u32) void {
     c.omp_set_max_active_levels(@intCast(max_levels));
 }
 
-extern "c" fn omp_set_schedule(kind: sched_t, chunk_size: c_int) void;
-pub inline fn set_schedule(kind: sched_t, chunk_size: u32) void {
+extern "c" fn omp_set_schedule(kind: schedule, chunk_size: c_int) void;
+pub inline fn set_schedule(kind: schedule, chunk_size: u32) void {
     c.omp_set_schedule(kind, chunk_size);
 }
 
@@ -414,7 +427,7 @@ pub inline fn get_thread_limit() u32 {
 pub inline fn get_max_active_levels() u32 {
     return @intCast(c.omp_get_max_active_levels());
 }
-pub inline fn get_schedule(kind: *sched_t, chunk_size: *u32) void {
+pub inline fn get_schedule(kind: *schedule, chunk_size: *u32) void {
     c.omp_get_schedule(kind, @intCast(chunk_size));
 }
 
