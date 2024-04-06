@@ -6,23 +6,28 @@ fn test_omp_critical() bool {
     var sum: u32 = 0;
     const known_sum: u32 = 999 * 1000 / 2;
 
-    omp.parallel_ctx(.{ .shared = .{&sum} }, .{}, .{}, struct {
-        fn f(p: *omp.ctx, f_sum: *u32) void {
+    omp.parallel(.{}).run(.{ .shared = .{&sum} }, struct {
+        fn f(f_sum: *u32) void {
             var mysum: u32 = 0;
 
-            p.parallel_for(.{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{}, struct {
+            omp.loop(u32, .{}).run(1, params.loop_count, 1, .{ .shared = .{&mysum} }, struct {
                 fn f(i: u32, f_mysum: *u32) void {
                     f_mysum.* = f_mysum.* + i;
                 }
             }.f);
 
-            p.critical(.{ f_sum, &mysum }, "none", .none, struct {
+            omp.critical(.{}).run(.{ f_sum, &mysum }, struct {
                 fn f(ff_sum: *u32, f_mysum: *u32) void {
                     ff_sum.* += f_mysum.*;
                 }
             }.f);
         }
     }.f);
+
+    if (sum != known_sum) {
+        std.debug.print("sum: {}, known_sum: {}\n", .{ sum, known_sum });
+    }
+
     return known_sum == sum;
 }
 
@@ -42,10 +47,10 @@ fn omp_critical_hint(iter: u32) bool {
     var sum: u32 = 0;
     const known_sum: u32 = (999 * 1000) / 2;
 
-    omp.parallel_ctx(.{ .shared = .{ &sum, iter } }, .{}, .{}, struct {
-        fn f(p: *omp.ctx, f_sum: *u32, f_iter: u32) void {
+    omp.parallel(.{}).run(.{ .shared = .{ &sum, iter } }, struct {
+        fn f(f_sum: *u32, f_iter: u32) void {
             var mysum: u32 = 0;
-            p.parallel_for(.{&mysum}, @as(u32, 0), @as(u32, 1000), @as(u32, 1), .{}, struct {
+            omp.loop(u32, .{}).run(0, params.loop_count, 1, .{ .shared = .{&mysum} }, struct {
                 fn f(i: u32, f_mysum: *u32) void {
                     f_mysum.* = f_mysum.* + i;
                 }
@@ -59,16 +64,16 @@ fn omp_critical_hint(iter: u32) bool {
 
             switch (f_iter % 4) {
                 0 => {
-                    p.critical(.{ f_sum, &mysum }, "a", .uncontended, fun);
+                    omp.critical(.{ .name = "a", .sync = .uncontended }).run(.{ f_sum, &mysum }, fun);
                 },
                 1 => {
-                    p.critical(.{ f_sum, &mysum }, "b", .contended, fun);
+                    omp.critical(.{ .name = "b", .sync = .contended }).run(.{ f_sum, &mysum }, fun);
                 },
                 2 => {
-                    p.critical(.{ f_sum, &mysum }, "c", .nonspeculative, fun);
+                    omp.critical(.{ .name = "c", .sync = .nonspeculative }).run(.{ f_sum, &mysum }, fun);
                 },
                 3 => {
-                    p.critical(.{ f_sum, &mysum }, "d", .speculative, fun);
+                    omp.critical(.{ .name = "d", .sync = .speculative }).run(.{ f_sum, &mysum }, fun);
                 },
                 else => {
                     unreachable;
@@ -76,6 +81,7 @@ fn omp_critical_hint(iter: u32) bool {
             }
         }
     }.f);
+
     if (sum != known_sum) {
         std.debug.print("sum: {}, known_sum: {}\n", .{ sum, known_sum });
     }

@@ -6,457 +6,505 @@ const c = @cImport({
 });
 
 const in = @import("input_handler.zig");
-
-pub const parallel_for_opts = struct {
-    sched: kmp.sched_t = kmp.sched_t.StaticNonChunked,
+pub const proc_bind = enum(c_int) {
+    default = 1,
+    master = 2,
+    close = 3,
+    spread = 4,
+    primary = 5,
 };
 
-pub const reduction_operators = kmp.reduction_operators;
-
-pub const parallel_opts = struct {
-    num_threads: ?c_int = undefined,
-    condition: ?bool = undefined,
-};
-
-pub const comptime_parallel_opts = struct {
-    reduction: []const reduction_operators = &[0]reduction_operators{},
-    give_context: bool = false,
-};
-
-pub inline fn parallel_ctx(
-    args: anytype,
-    opts: parallel_opts,
-    comptime copts: comptime_parallel_opts,
-    comptime f: anytype,
-) in.copy_ret(f) {
-    in.check_fn_signature_with_ctx(f);
-    const new_copts = comptime_parallel_opts{
-        .reduction = copts.reduction,
-        .give_context = true,
-    };
-
-    return parallel(args, opts, new_copts, f);
-}
-
-pub fn parallel(
-    args: anytype,
-    opts: parallel_opts,
-    comptime copts: comptime_parallel_opts,
-    comptime f: anytype,
-) in.copy_ret(f) {
-    const new_args = in.normalize_args(args);
-    in.check_fn_signature(f);
-
-    const id = .{
-        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-        .psource = "parallel" ++ @typeName(@TypeOf(f)),
-    };
-    if (opts.num_threads) |num| {
-        kmp.push_num_threads(&id, kmp.get_tid(), num);
-    }
-
-    const ret_type = struct {
-        ret: in.copy_ret(f) = undefined,
-        args: @TypeOf(new_args),
-    };
-
-    var ret: ret_type = .{ .args = new_args };
-
-    const parallel_outline = ctx.parallel_outline(@TypeOf(ret), in.copy_ret(f), f, copts.reduction);
-
-    if (copts.give_context) {
-        if (opts.condition) |cond| {
-            kmp.fork_call_if(&id, 1, @ptrCast(&parallel_outline.outline_ctx), @intFromBool(cond), &ret);
-        } else {
-            kmp.fork_call(&id, 1, @ptrCast(&parallel_outline.outline_ctx), &ret);
-        }
-    } else {
-        if (opts.condition) |cond| {
-            kmp.fork_call_if(&id, 1, @ptrCast(&parallel_outline.outline), @intFromBool(cond), &ret);
-        } else {
-            kmp.fork_call(&id, 1, @ptrCast(&parallel_outline.outline), &ret);
-        }
-    }
-
-    return ret.ret;
-}
-
-pub const ctx = struct {
-    const Self = @This();
-
-    global_tid: c_int,
-    bound_tid: c_int,
-
-    inline fn parallel_outline(
-        comptime T: type,
-        comptime R: type,
-        comptime f: anytype,
-        comptime red_opts: []const reduction_operators,
-    ) type {
-        const static = struct {
-            var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-        };
-
-        return opaque {
-            fn outline_ctx(
-                gtid: *c_int,
-                btid: *c_int,
-                argss: *T,
-            ) callconv(.C) void {
-                var this: Self = .{
-                    .global_tid = gtid.*,
-                    .bound_tid = btid.*,
-                };
-
-                var private_copy = in.deep_copy(argss.args.private);
-                var reduction_copy = in.deep_copy(argss.args.reduction);
-                var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
-
-                if (@typeInfo(R) == .ErrorUnion) {
-                    argss.ret = @call(.always_inline, f, .{&this} ++ true_args) catch |err| err;
-                } else {
-                    argss.ret = @call(.always_inline, f, .{&this} ++ true_args);
-                }
-
-                if (red_opts.len > 0) {
-                    const id = .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                    };
-                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &static.lck);
-                }
-
-                return;
-            }
-
-            fn outline(
-                gtid: *c_int,
-                btid: *c_int,
-                argss: *T,
-            ) callconv(.C) void {
-                var this: Self = .{
-                    .global_tid = gtid.*,
-                    .bound_tid = btid.*,
-                };
-
-                var private_copy = in.deep_copy(argss.args.private);
-                var reduction_copy = in.deep_copy(argss.args.reduction);
-                var true_args = argss.args.shared ++ private_copy ++ reduction_copy;
-
-                if (@typeInfo(R) == .ErrorUnion) {
-                    argss.ret = @call(.always_inline, f, true_args) catch |err| err;
-                } else {
-                    argss.ret = @call(.always_inline, f, true_args);
-                }
-
-                if (red_opts.len > 0) {
-                    const id = .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                    };
-                    this.reduce(&id, argss.args.reduction, reduction_copy, red_opts, &static.lck);
-                }
-
-                return;
-            }
-        };
-    }
-
-    inline fn reduce(
-        this: *Self,
-        comptime id: *const kmp.ident_t,
-        out_reduction: anytype,
-        copies: @TypeOf(out_reduction),
-        comptime operators: []const kmp.reduction_operators,
-        lck: *kmp.critical_name_t,
-    ) void {
-        const res = kmp.reduce_nowait(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, this.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck);
-        if (res == 2) {
-            @panic("Atomic reduce not implemented");
-        }
-
-        if (res == 0) {
-            return;
-        }
-
-        kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
-        kmp.end_reduce_nowait(id, this.global_tid, lck);
-    }
-
-    pub inline fn single_ctx(
-        this: *Self,
-        args: anytype,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_fn_signature_with_ctx(f);
-        this.single(.{this} ++ args, f);
-    }
-    pub inline fn single(
-        this: *Self,
-        args: anytype,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_args(@TypeOf(args));
-        in.check_fn_signature(f);
-
-        const single_id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-            .psource = "single" ++ @typeName(@TypeOf(f)),
-        };
-        const barrier_id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_BARRIER_IMPL_SINGLE),
-            .psource = "single" ++ @typeName(@TypeOf(f)),
-        };
-
-        const res = undefined;
-        if (kmp.single(&single_id, this.global_tid) == 1) {
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-
-            if (type_info == .ErrorUnion) {
-                res = try @call(.always_inline, f, args);
-            } else {
-                res = @call(.always_inline, f, args);
-            }
-
-            kmp.end_single(&single_id, this.global_tid);
-        }
-        kmp.barrier(&barrier_id, this.global_tid);
-
-        return res;
-    }
-
-    pub inline fn master_ctx(
-        this: *Self,
-        args: anytype,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_fn_signature_with_ctx(f);
-        this.master(.{this} ++ args, f);
-    }
-    pub inline fn master(
-        this: *Self,
-        args: anytype,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_args(@TypeOf(args));
-        in.check_fn_signature(f);
-
-        const master_id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-            .psource = "master" ++ @typeName(@TypeOf(f)),
-        };
-
-        if (kmp.master(&master_id, this.global_tid) == 1) {
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-            if (type_info == .ErrorUnion) {
-                return try @call(.always_inline, f, args);
-            } else {
-                return @call(.always_inline, f, args);
-            }
-        }
-    }
-
-    pub inline fn parallel_for_ctx(
-        this: *Self,
-        args: anytype,
-        lower: anytype,
-        upper: anytype,
-        increment: anytype,
-        opts: parallel_for_opts,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_fn_signature_with_ctx(f);
-        this.parallel_for(.{this} ++ args, lower, upper, increment, opts, f);
-    }
-    pub inline fn parallel_for(
-        this: *Self,
-        args: anytype,
-        lower: anytype,
-        upper: anytype,
-        increment: anytype,
-        opts: parallel_for_opts,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        const T = comptime ret: {
-            if (!std.meta.trait.isSignedInt(@TypeOf(lower)) and !std.meta.trait.isUnsignedInt(@TypeOf(lower))) {
-                @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(@TypeOf(lower)));
-            }
-
-            break :ret @TypeOf(lower);
-        };
-        in.check_args(@TypeOf(args));
-
-        in.check_fn_signature(f);
-
-        const f_type_info = @typeInfo(@TypeOf(f));
-        if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != T) {
-            @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
-        }
-
-        const id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-            .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-        };
-
-        // TODO: Don't know what will happen with other schedules
-        std.debug.assert(opts.sched == kmp.sched_t.StaticNonChunked);
-        var sched: c_int = @intFromEnum(opts.sched);
-
-        // This is `1` iside the last thread execution
-        var last_iter: c_int = 0;
-
-        // TODO: Figure out how to use all of these values
-        var low: T = lower;
-
-        // TODO: Maybe use f64 when we need more precision?
-        var upp: T = upper - 1;
-        var stri: T = 1;
-        var incr: T = increment;
-        var chunk: T = 1;
-
-        // std.debug.print("upp: {}\n", .{upp});
-        kmp.for_static_init(T, &id, this.global_tid, sched, &last_iter, &low, &upp, &stri, incr, chunk);
-        // std.debug.print("upp: {}, low: {}, last_iter: {}\n", .{ upp, low, last_iter });
-
-        // TODO: Figure out how to pass the result
-        while (true) {
-            const i = @atomicRmw(T, &low, .Add, incr, .AcqRel);
-            if (upp < i) {
-                break;
-            }
-            // std.debug.print("upp: {}, i: {}, last_iter: {}, stride: {}\n", .{ upp, i, last_iter, stri });
-
-            const new_args = .{i} ++ args;
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-
-            if (type_info == .ErrorUnion) {
-                _ = try @call(.always_inline, f, new_args);
-            } else {
-                _ = @call(.always_inline, f, new_args);
-            }
-        }
-
-        const id_fini = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-            .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-            .reserved_3 = 0x1b,
-        };
-        kmp.for_static_fini(&id_fini, this.global_tid);
-
-        this.barrier();
-        if (in.copy_ret(f) != void) {
-            return undefined;
-        }
-    }
-
-    pub inline fn barrier(
-        this: *Self,
-    ) void {
-        const id: kmp.ident_t = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-            .psource = "barrier",
-        };
-        kmp.barrier(&id, this.global_tid);
-    }
-
-    pub inline fn critical_ctx(
-        this: *Self,
-        args: anytype,
-        comptime name: []const u8,
-        comptime sync: sync_hint_t,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_fn_signature_with_ctx(f);
-        this.critical(args, name, sync, f);
-    }
-    pub inline fn critical(
-        this: *Self,
-        args: anytype,
-        comptime name: []const u8,
-        comptime sync: sync_hint_t,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        _ = name;
-        in.check_args(@TypeOf(args));
-        in.check_fn_signature(f);
-
-        const id: kmp.ident_t = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-            .psource = "barrier",
-        };
-
-        const static = struct {
-            var lock: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-        };
-
-        kmp.critical(&id, this.global_tid, &static.lock, @intFromEnum(sync));
-
-        const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-        const ret = ret: {
-            if (type_info == .ErrorUnion) {
-                break :ret try @call(.always_inline, f, args);
-            } else {
-                break :ret @call(.always_inline, f, args);
-            }
-        };
-        kmp.critical_end(&id, this.global_tid, &static.lock);
-
-        return ret;
-    }
-
-    pub inline fn task_ctx(
-        this: *Self,
-        args: anytype,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        in.check_fn_signature_with_ctx(f);
-        this.task(.{this} ++ args, f);
-    }
-    pub inline fn task(
-        this: *Self,
-        args: anytype,
-        comptime f: anytype,
-    ) in.copy_ret(f) {
-        const id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-            .psource = "task" ++ @typeName(@TypeOf(f)),
-        };
-
-        in.check_args(@TypeOf(args));
-        in.check_fn_signature(f);
-
-        const ret_type = struct {
-            ret: in.copy_ret(f) = undefined,
-            args: @TypeOf(args),
-        };
-        const ret: ret_type = .{ .ret = undefined, .args = args };
-        const outline = kmp.task_outline(f, ret_type);
-
-        var t = kmp.task_alloc(&id, this.global_tid, .{ .tiedness = 1 }, outline.size_in_release_debug, 0, outline.task);
-        t.shared = @constCast(@ptrCast(&ret));
-        _ = kmp.task(&id, this.global_tid, t);
-
-        return ret.ret;
-    }
-
-    pub inline fn taskyeild(
-        this: *Self,
-    ) void {
-        const id = .{
-            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-            .psource = "taskyeild",
-        };
-        kmp.taskyield(&id, this.global_tid);
-    }
-};
-
-pub const sched_t = enum(c_int) {
+pub const schedule = enum(c_long) {
     static = 1,
     dynamic = 2,
     guided = 3,
     auto = 4,
     monotonic = 0x80000000,
 };
+
+pub const reduction_operators = kmp.reduction_operators;
+pub const parallel_opts = struct {
+    iff: bool = false,
+    proc_bind: proc_bind = .default,
+    reduction: []const reduction_operators = &[0]reduction_operators{},
+};
+
+pub const parallel_for_opts = struct {
+    ctx: bool = false,
+    sched: schedule = .static,
+    chunk_size: c_int = 1,
+    ordered: bool = false,
+    reduction: []const reduction_operators = &[0]reduction_operators{},
+    nowait: bool = false,
+};
+pub const ctx = struct {
+    global_tid: c_int,
+    bound_tid: c_int,
+};
+
+pub const critical_options = struct {
+    sync: sync_hint_t = .none,
+    name: []const u8 = "",
+};
+
+threadlocal var global_ctx: ctx = undefined;
+
+pub fn parallel(comptime opts: parallel_opts) type {
+    const common = struct {
+        inline fn make_args(
+            args: anytype,
+            comptime f: anytype,
+        ) in.zigc_ret(f, @TypeOf(in.normalize_args(args))) {
+            in.check_fn_signature(f);
+
+            return .{ .v = in.normalize_args(args) };
+        }
+
+        inline fn make_proc_bind(
+            id: *const kmp.ident_t,
+            comptime bind: proc_bind,
+        ) void {
+            if (bind != .default) {
+                kmp.push_proc_bind(id, kmp.get_tid(), bind);
+            }
+        }
+    };
+    if (opts.iff) {
+        return struct {
+            pub inline fn run(
+                cond: bool,
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_fn_signature(f);
+
+                const ret = common.make_args(args, f);
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                common.make_proc_bind(&id, opts.proc_bind);
+                const outline = parallel_outline(f, @TypeOf(ret), opts).outline;
+
+                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
+
+                return ret.ret;
+            }
+        };
+    } else {
+        return struct {
+            pub inline fn run(
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_fn_signature(f);
+
+                const ret = common.make_args(args, f);
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                common.make_proc_bind(&id, opts.proc_bind);
+                const outline = parallel_outline(f, @TypeOf(ret), opts).outline;
+
+                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
+
+                return ret.ret;
+            }
+        };
+    }
+}
+
+inline fn parallel_outline(
+    comptime f: anytype,
+    comptime R: type,
+    comptime opts: parallel_opts,
+) type {
+    const static = struct {
+        var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+    };
+
+    return opaque {
+        fn outline(
+            gtid: *c_int,
+            btid: *c_int,
+            args: *R,
+        ) callconv(.C) void {
+            global_ctx = .{
+                .global_tid = gtid.*,
+                .bound_tid = btid.*,
+            };
+
+            var private_copy = in.deep_copy(args.v.private);
+            var reduction_copy = in.deep_copy(args.v.reduction);
+            const true_args = args.v.shared ++ private_copy ++ reduction_copy;
+
+            if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                args.ret = @call(.always_inline, f, true_args) catch |err| err;
+            } else {
+                args.ret = @call(.always_inline, f, true_args);
+            }
+
+            if (opts.reduction.len > 0) {
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                reduce(&id, args.v.reduction, reduction_copy, opts.reduction, &static.lck);
+            }
+
+            return;
+        }
+    };
+}
+
+inline fn reduce(
+    comptime id: *const kmp.ident_t,
+    out_reduction: anytype,
+    copies: @TypeOf(out_reduction),
+    comptime operators: []const kmp.reduction_operators,
+    lck: *kmp.critical_name_t,
+) void {
+    const res = kmp.reduce_nowait(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, global_ctx.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck);
+    if (res == 2) {
+        @panic("Atomic reduce not implemented");
+    }
+
+    if (res == 0) {
+        return;
+    }
+
+    kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
+    kmp.end_reduce_nowait(id, global_ctx.global_tid, lck);
+}
+
+pub inline fn loop(
+    comptime index_type: type,
+    comptime opts: parallel_for_opts,
+) type {
+    const static = struct {
+        var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+    };
+    const common = struct {
+        pub fn to_kmp_sched(comptime sched: schedule) kmp.sched_t {
+            switch (sched) {
+                .static => return if (opts.chunk_size > 1) kmp.sched_t.StaticChunked else kmp.sched_t.StaticNonChunked,
+                .dynamic => return kmp.sched_t.Dynamic,
+                .guided => return kmp.sched_t.Guided,
+                .auto => return kmp.sched_t.Runtime,
+                else => unreachable,
+            }
+        }
+    };
+
+    if (!std.meta.trait.isSignedInt(index_type) and !std.meta.trait.isUnsignedInt(index_type)) {
+        @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(index_type));
+    }
+    if (!opts.ordered and opts.sched == .static) {
+        return struct {
+            pub inline fn run(
+                lower: index_type,
+                upper: index_type,
+                increment: index_type,
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_args(@TypeOf(args));
+
+                const splat = in.normalize_args(args);
+                var private_copy = in.deep_copy(splat.private);
+                var reduction_copy = in.deep_copy(splat.reduction);
+                const true_args = splat.shared ++ private_copy ++ reduction_copy;
+
+                in.check_fn_signature(f);
+
+                const f_type_info = @typeInfo(@TypeOf(f));
+                if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != index_type) {
+                    @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(index_type) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                }
+
+                const id = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                };
+
+                // This is `1` iside the last thread execution
+                var last_iter: c_int = 0;
+                var low: index_type = lower;
+                var upp: index_type = upper - 1;
+                var stri: index_type = 1;
+                const incr: index_type = increment;
+
+                kmp.for_static_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
+                defer {
+                    const id_fini = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                        .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                        .reserved_3 = 0x1b,
+                    };
+                    kmp.for_static_fini(&id_fini, global_ctx.global_tid);
+                    if (!opts.nowait) {
+                        barrier();
+                    }
+                }
+
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+                if (opts.chunk_size > 1) {
+                    while (low + opts.chunk_size < upper) : (low += stri) {
+                        inline for (0..opts.chunk_size) |i| {
+                            if (type_info == .ErrorUnion) {
+                                _ = @call(.always_inline, f, .{low + @as(index_type, i)} ++ true_args) catch |err| err;
+                            } else {
+                                _ = @call(.always_inline, f, .{low + @as(index_type, i)} ++ true_args);
+                            }
+                        }
+                    }
+                    while (low < upper) : (low += incr) {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(.always_inline, f, .{low} ++ true_args) catch |err| err;
+                        } else {
+                            _ = @call(.always_inline, f, .{low} ++ true_args);
+                        }
+                    }
+                } else {
+                    var i: index_type = low;
+                    while (i <= upp) : (i += incr) {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
+                        } else {
+                            _ = @call(.always_inline, f, .{i} ++ true_args);
+                        }
+                    }
+                }
+
+                if (opts.reduction.len > 0) {
+                    const redid: kmp.ident_t = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                    };
+                    reduce(&redid, splat.reduction, reduction_copy, opts.reduction, &static.lck);
+                }
+
+                return undefined;
+            }
+        };
+    } else {
+        return struct {
+            pub inline fn run(
+                lower: index_type,
+                upper: index_type,
+                increment: index_type,
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_args(@TypeOf(args));
+
+                const splat = in.normalize_args(args);
+                var private_copy = in.deep_copy(splat.private);
+                var reduction_copy = in.deep_copy(splat.reduction);
+                const true_args = splat.shared ++ private_copy ++ reduction_copy;
+
+                in.check_fn_signature(f);
+
+                const f_type_info = @typeInfo(@TypeOf(f));
+                if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != index_type) {
+                    @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(index_type) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                }
+
+                const id = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                };
+
+                // This is `1` iside the last thread execution
+                var last_iter: c_int = 0;
+                var low: index_type = lower;
+                var upp: index_type = upper - 1;
+                var stri: index_type = 1;
+                var incr: index_type = increment;
+                kmp.dispatch_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
+                defer {
+                    if (!opts.nowait) {
+                        barrier();
+                    }
+                }
+
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+                while (kmp.dispatch_next(index_type, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
+                    defer kmp.dispatch_fini(index_type, &id, global_ctx.global_tid);
+
+                    var i: index_type = low;
+                    while (i <= upp) : (i += incr) {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
+                        } else {
+                            _ = @call(.always_inline, f, .{i} ++ true_args);
+                        }
+                    }
+                }
+                if (opts.reduction.len > 0) {
+                    const redid: kmp.ident_t = .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                    };
+                    reduce(&redid, splat.reduction, reduction_copy, opts.reduction, &static.lck);
+                }
+
+                return undefined;
+            }
+        };
+    }
+}
+
+pub inline fn barrier() void {
+    const id: kmp.ident_t = .{
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+        .psource = "barrier",
+    };
+    kmp.barrier(&id, global_ctx.global_tid);
+}
+
+pub inline fn critical(
+    comptime opts: critical_options,
+) type {
+    return struct {
+        pub inline fn run(
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            in.check_args(@TypeOf(args));
+            in.check_fn_signature(f);
+
+            const id: kmp.ident_t = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                .psource = "barrier",
+            };
+
+            const static = struct {
+                var lock: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+            };
+
+            kmp.critical(&id, global_ctx.global_tid, &static.lock, @intFromEnum(opts.sync));
+            defer {
+                kmp.critical_end(&id, global_ctx.global_tid, &static.lock);
+            }
+
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            const ret = ret: {
+                if (type_info == .ErrorUnion) {
+                    break :ret try @call(.always_inline, f, args);
+                } else {
+                    break :ret @call(.always_inline, f, args);
+                }
+            };
+
+            return ret;
+        }
+    };
+}
+
+pub inline fn single() type {
+    return struct {
+        pub inline fn run(
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            in.check_args(@TypeOf(args));
+            in.check_fn_signature(f);
+
+            const single_id = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                .psource = "single" ++ @typeName(@TypeOf(f)),
+            };
+            const barrier_id = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_BARRIER_IMPL_SINGLE),
+                .psource = "single" ++ @typeName(@TypeOf(f)),
+            };
+
+            const res = undefined;
+            if (kmp.single(&single_id, global_ctx.global_tid) == 1) {
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+
+                if (type_info == .ErrorUnion) {
+                    res = try @call(.always_inline, f, args);
+                } else {
+                    res = @call(.always_inline, f, args);
+                }
+
+                kmp.end_single(&single_id, global_ctx.global_tid);
+            }
+            kmp.barrier(&barrier_id, global_ctx.global_tid);
+
+            return res;
+        }
+    };
+}
+
+pub const only_master: c_int = 0;
+pub inline fn masked() type {
+    return struct {
+        pub inline fn run(
+            filter: i32,
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            in.check_args(@TypeOf(args));
+            in.check_fn_signature(f);
+
+            const masked_id = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                .psource = "masked" ++ @typeName(@TypeOf(f)),
+            };
+
+            if (kmp.masked(&masked_id, global_ctx.global_tid, filter) == 1) {
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+                if (type_info == .ErrorUnion) {
+                    return try @call(.always_inline, f, args);
+                } else {
+                    return @call(.always_inline, f, args);
+                }
+            }
+        }
+    };
+}
+
+pub inline fn task(
+    args: anytype,
+    comptime f: anytype,
+) in.copy_ret(f) {
+    const id = .{
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+        .psource = "task" ++ @typeName(@TypeOf(f)),
+    };
+
+    in.check_args(@TypeOf(args));
+    in.check_fn_signature(f);
+
+    const ret_type = struct {
+        ret: in.copy_ret(f) = undefined,
+        args: @TypeOf(args),
+    };
+    const ret: ret_type = .{ .ret = undefined, .args = args };
+    const outline = kmp.task_outline(f, ret_type);
+
+    var t = kmp.task_alloc(&id, global_ctx.global_tid, .{ .tiedness = 1 }, outline.size_in_release_debug, 0, outline.task);
+    t.shared = @constCast(@ptrCast(&ret));
+    _ = kmp.task(&id, global_ctx.global_tid, t);
+
+    return ret.ret;
+}
+
+pub inline fn taskyeild() void {
+    const id = .{
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+        .psource = "taskyeild",
+    };
+    kmp.taskyield(&id, global_ctx.global_tid);
+}
+
+////////////////////////////////////////////////////////////////////////////////////
+/// Runtime API ////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////
 
 /// Setters
 pub inline fn set_num_threads(num_threads: u32) void {
@@ -475,8 +523,8 @@ pub inline fn set_max_active_levels(max_levels: u32) void {
     c.omp_set_max_active_levels(@intCast(max_levels));
 }
 
-extern "c" fn omp_set_schedule(kind: sched_t, chunk_size: c_int) void;
-pub inline fn set_schedule(kind: sched_t, chunk_size: u32) void {
+extern "c" fn omp_set_schedule(kind: schedule, chunk_size: c_int) void;
+pub inline fn set_schedule(kind: schedule, chunk_size: u32) void {
     c.omp_set_schedule(kind, chunk_size);
 }
 
@@ -536,7 +584,7 @@ pub inline fn get_thread_limit() u32 {
 pub inline fn get_max_active_levels() u32 {
     return @intCast(c.omp_get_max_active_levels());
 }
-pub inline fn get_schedule(kind: *sched_t, chunk_size: *u32) void {
+pub inline fn get_schedule(kind: *schedule, chunk_size: *u32) void {
     c.omp_get_schedule(kind, @intCast(chunk_size));
 }
 

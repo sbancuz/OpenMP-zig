@@ -1,5 +1,5 @@
 const std = @import("std");
-const omp = @import("omp2.zig");
+const omp = @import("omp.zig");
 
 pub const ident_flags = enum(c_int) {
     // /*! Use trampoline for internal microtasks */
@@ -179,14 +179,24 @@ pub inline fn dispatch_fini(comptime T: type, comptime loc: *const ident_t, gtid
     }
 }
 
-extern "C" fn __kmpc_master(loc: *const ident_t, global_tid: c_int) c_int;
-pub inline fn master(comptime name: *const ident_t, global_tid: c_int) c_int {
-    return __kmpc_master(name, global_tid);
+extern "C" fn __kmpc_ordered(loc: *const ident_t, global_tid: c_int) void;
+pub inline fn ordered(comptime name: *const ident_t, global_tid: c_int) void {
+    __kmpc_ordered(name, global_tid);
 }
 
-extern "C" fn __kmpc_end_master(loc: *const ident_t, global_tid: c_int) void;
-pub inline fn end_master(comptime name: *const ident_t, global_tid: c_int) void {
-    __kmpc_end_master(name, global_tid);
+extern "C" fn __kmpc_end_ordered(loc: *const ident_t, global_tid: c_int) void;
+pub inline fn end_ordered(comptime name: *const ident_t, global_tid: c_int) void {
+    __kmpc_end_ordered(name, global_tid);
+}
+
+extern "C" fn __kmpc_masked(loc: *const ident_t, global_tid: c_int, filter: c_int) c_int;
+pub inline fn masked(comptime name: *const ident_t, global_tid: c_int, filter: c_int) c_int {
+    return __kmpc_masked(name, global_tid, filter);
+}
+
+extern "C" fn __kmpc_end_masked(loc: *const ident_t, global_tid: c_int) void;
+pub inline fn end_masked(comptime name: *const ident_t, global_tid: c_int) void {
+    __kmpc_end_masked(name, global_tid);
 }
 
 extern "C" fn __kmpc_single(loc: *const ident_t, global_tid: c_int) c_int;

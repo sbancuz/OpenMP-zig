@@ -2,26 +2,26 @@ const std = @import("std");
 const omp = @import("omp");
 const params = @import("params.zig");
 
-fn test_omp_master() bool {
+fn test_omp_masked() bool {
     var nthreads: u32 = 0;
     var executing_thread: i32 = -1;
     var tid_result: u32 = 0;
 
-    omp.parallel_ctx(.{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, .{}, .{}, struct {
-        fn f(p: *omp.ctx, f_nthreads: *u32, f_executing_thread: *i32, f_tid_result: *u32) void {
-            p.master_ctx(.{ f_nthreads, f_executing_thread, f_tid_result }, struct {
-                fn f(pp: *omp.ctx, ff_nthreads: *u32, ff_executing_thread: *i32, ff_tid_result: *u32) void {
+    omp.parallel(.{}).run(.{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, struct {
+        fn f(f_nthreads: *u32, f_executing_thread: *i32, f_tid_result: *u32) void {
+            omp.masked().run(omp.only_master, .{ f_nthreads, f_executing_thread, f_tid_result }, struct {
+                fn f(ff_nthreads: *u32, ff_executing_thread: *i32, ff_tid_result: *u32) void {
                     var tid: i32 = @intCast(omp.get_thread_num());
 
                     if (tid != 0) {
-                        pp.critical(.{ff_tid_result}, "tid_result", .none, struct {
+                        omp.critical(.{}).run(.{ff_tid_result}, struct {
                             fn f(fff_tid_result: *u32) void {
                                 fff_tid_result.* += 1;
                             }
                         }.f);
                     }
 
-                    pp.critical(.{ff_nthreads}, "none", .none, struct {
+                    omp.critical(.{}).run(.{ff_nthreads}, struct {
                         fn f(fff_nthreads: *u32) void {
                             fff_nthreads.* += 1;
                         }
@@ -31,14 +31,15 @@ fn test_omp_master() bool {
             }.f);
         }
     }.f);
+
     return (nthreads == 1) and (executing_thread == 0) and (tid_result == 0);
 }
 
-test "master" {
+test "masked" {
     var num_failed: u32 = 0;
 
     for (params.repetitions) |_| {
-        if (!test_omp_master()) {
+        if (!test_omp_masked()) {
             num_failed += 1;
         }
     }
