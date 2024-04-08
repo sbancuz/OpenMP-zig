@@ -18,7 +18,7 @@
             [
               zig
 
-              llvmPackages_17.openmp
+              llvmPackages_18.openmp
             ];
         };
       }

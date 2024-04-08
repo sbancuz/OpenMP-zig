@@ -405,6 +405,49 @@ pub inline fn create_reduce(
             }
         }
 
+        pub inline fn finalize_atomic(
+            lhs: anytype,
+            rhs: @TypeOf(lhs),
+        ) void {
+            inline for (lhs, rhs) |l, r| {
+                inline for (reduce_operators, types) |op, type_field| {
+                    const T = @typeInfo(type_field.type).Pointer.child;
+                    switch (op) {
+                        .plus => {
+                            _ = @atomicRmw(T, l, .Add, r.*, .AcqRel);
+                        },
+                        .mult => {
+                            _ = @atomicRmw(T, l, .Mul, r.*, .AcqRel);
+                        },
+                        .minus => {
+                            _ = @atomicRmw(T, l, .Sub, r.*, .AcqRel);
+                        },
+                        .bitwise_and => {
+                            _ = @atomicRmw(T, l, .And, r.*, .AcqRel);
+                        },
+                        .bitwise_or => {
+                            _ = @atomicRmw(T, l, .Or, r.*, .AcqRel);
+                        },
+                        .bitwise_xor => {
+                            _ = @atomicRmw(T, l, .Xor, r.*, .AcqRel);
+                        },
+                        .logical_and => {
+                            _ = @atomicRmw(T, l, .And, r.*, .AcqRel);
+                        },
+                        .logical_or => {
+                            _ = @atomicRmw(T, l, .Or, r.*, .AcqRel);
+                        },
+                        .max => {
+                            _ = @atomicRmw(T, l, .Max, r.*, .AcqRel);
+                        },
+                        .min => {
+                            _ = @atomicRmw(T, l, .Min, r.*, .AcqRel);
+                        },
+                    }
+                }
+            }
+        }
+
         fn f(
             lhs: *anyopaque,
             rhs: *anyopaque,
@@ -486,6 +529,34 @@ pub inline fn end_reduce_nowait(comptime loc: *const ident_t, global_tid: c_int,
     __kmpc_end_reduce_nowait(loc, global_tid, lck);
 }
 
+extern "C" fn __kmpc_reduce(
+    loc: *const ident_t,
+    global_tid: c_int,
+    num_vars: c_int,
+    reduce_size: usize,
+    reduce_data: *anyopaque,
+    reduce_func: *const fn (*anyopaque, *anyopaque) callconv(.C) void,
+    lck: *critical_name_t,
+) c_int;
+/// This call il synchronized and will only occur in the main thread, so we don't need to worry about the reduce_func being called concurrently or use atomics
+pub inline fn reduce(
+    comptime types: []const std.builtin.Type.StructField,
+    comptime loc: *const ident_t,
+    global_tid: c_int,
+    num_vars: c_int,
+    reduce_size: usize,
+    reduce_data: *anyopaque,
+    comptime reduce_operators: []const reduction_operators,
+    lck: *critical_name_t,
+) c_int {
+    const reduce_t = create_reduce(types, reduce_operators);
+    return __kmpc_reduce(loc, global_tid, num_vars, reduce_size, reduce_data, reduce_t.f, lck);
+}
+
+extern "C" fn __kmpc_end_reduce(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
+pub inline fn end_reduce(comptime loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void {
+    __kmpc_end_reduce(loc, global_tid, lck);
+}
 extern "C" fn __kmpc_push_proc_bind(loc: *const ident_t, global_tid: c_int, proc_bind: c_int) void;
 pub inline fn push_proc_bind(comptime loc: *const ident_t, global_tid: c_int, proc_bind: omp.proc_bind) void {
     __kmpc_push_proc_bind(loc, global_tid, @intFromEnum(proc_bind));

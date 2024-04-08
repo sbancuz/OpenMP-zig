@@ -26,11 +26,14 @@ pub const reduction_operators = kmp.reduction_operators;
 pub const parallel_opts = struct {
     iff: bool = false,
     proc_bind: proc_bind = .default,
-    reduction: []const reduction_operators = &[0]reduction_operators{},
+    ex: union {
+        reduction: []const reduction_operators,
+        loop_opts: parallel_for_opts,
+    } = .{ .reduction = &[0]reduction_operators{} },
 };
 
 pub const parallel_for_opts = struct {
-    ctx: bool = false,
+    idx: type,
     sched: schedule = .static,
     chunk_size: c_int = 1,
     ordered: bool = false,
@@ -51,6 +54,15 @@ threadlocal var global_ctx: ctx = undefined;
 
 pub fn parallel(comptime opts: parallel_opts) type {
     const common = struct {
+        const pri_loop = loop(.{
+            .idx = opts.ex.loop_opts.idx,
+            .sched = opts.ex.loop_opts.sched,
+            .chunk_size = opts.ex.loop_opts.chunk_size,
+            .reduction = opts.ex.loop_opts.reduction,
+            .ordered = opts.ex.loop_opts.ordered,
+            .nowait = true,
+        });
+
         inline fn make_args(
             args: anytype,
             comptime f: anytype,
@@ -68,6 +80,79 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 kmp.push_proc_bind(id, kmp.get_tid(), bind);
             }
         }
+
+        inline fn parallel_outline(
+            comptime f: anytype,
+            comptime R: type,
+            comptime in_opts: parallel_opts,
+        ) type {
+            const static = struct {
+                var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+            };
+
+            return opaque {
+                fn outline(
+                    gtid: *c_int,
+                    btid: *c_int,
+                    args: *R,
+                ) callconv(.C) void {
+                    global_ctx = .{
+                        .global_tid = gtid.*,
+                        .bound_tid = btid.*,
+                    };
+
+                    var private_copy = in.deep_copy(args.v.private);
+                    var reduction_copy = in.deep_copy(args.v.reduction);
+                    const true_args = args.v.shared ++ private_copy ++ reduction_copy;
+
+                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                        args.ret = @call(.always_inline, f, true_args) catch |err| err;
+                    } else {
+                        args.ret = @call(.always_inline, f, true_args);
+                    }
+
+                    if (opts.ex.reduction.len > 0) {
+                        const id: kmp.ident_t = .{
+                            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                            .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                        };
+                        reduce(&id, true, args.v.reduction, reduction_copy, in_opts.ex.reduction, &static.lck);
+                    }
+
+                    return;
+                }
+
+                fn loop_outline(
+                    gtid: *c_int,
+                    btid: *c_int,
+                    args: *R,
+                ) callconv(.C) void {
+                    global_ctx = .{
+                        .global_tid = gtid.*,
+                        .bound_tid = btid.*,
+                    };
+
+                    const new_opts = .{
+                        .idx = in_opts.ex.loop_opts.idx,
+                        .sched = in_opts.ex.loop_opts.sched,
+                        .chunk_size = in_opts.ex.loop_opts.chunk_size,
+                        .ordered = in_opts.ex.loop_opts.ordered,
+                        .reduction = in_opts.ex.loop_opts.reduction,
+                        .nowait = true,
+                    };
+                    _ = new_opts;
+
+                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                        // TODO: Figure out how to handle this
+                        _ = pri_loop.run(args.lower, args.upper, args.increment, args.v, f) catch |err| err;
+                    } else {
+                        pri_loop.run(args.lower, args.upper, args.increment, args.v, f);
+                    }
+
+                    return;
+                }
+            };
+        }
     };
     if (opts.iff) {
         return struct {
@@ -80,11 +165,42 @@ pub fn parallel(comptime opts: parallel_opts) type {
 
                 const ret = common.make_args(args, f);
                 const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
                 common.make_proc_bind(&id, opts.proc_bind);
-                const outline = parallel_outline(f, @TypeOf(ret), opts).outline;
+                const outline = common.parallel_outline(f, @TypeOf(ret), opts).outline;
+
+                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
+
+                return ret.ret;
+            }
+
+            pub inline fn run_loop(
+                cond: bool,
+                lower: opts.ex.loop_opts.idx,
+                upper: opts.ex.loop_opts.idx,
+                increment: opts.ex.loop_opts.idx,
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_fn_signature(f);
+
+                const ret_t = struct {
+                    ret: in.copy_ret(f) = undefined,
+                    v: @TypeOf(args),
+                    lower: opts.ex.loop_opts.idx,
+                    upper: opts.ex.loop_opts.idx,
+                    increment: opts.ex.loop_opts.idx,
+                };
+                const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
+
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                common.make_proc_bind(&id, opts.proc_bind);
+                const outline = common.parallel_outline(f, @TypeOf(ret), opts).loop_outline;
 
                 kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
 
@@ -101,11 +217,40 @@ pub fn parallel(comptime opts: parallel_opts) type {
 
                 const ret = common.make_args(args, f);
                 const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
                 common.make_proc_bind(&id, opts.proc_bind);
-                const outline = parallel_outline(f, @TypeOf(ret), opts).outline;
+                const outline = common.parallel_outline(f, @TypeOf(ret), opts).outline;
+
+                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
+
+                return ret.ret;
+            }
+
+            pub inline fn run_loop(
+                lower: opts.ex.loop_opts.idx,
+                upper: opts.ex.loop_opts.idx,
+                increment: opts.ex.loop_opts.idx,
+                args: anytype,
+                comptime f: anytype,
+            ) in.copy_ret(f) {
+                in.check_fn_signature(f);
+
+                const ret_t = struct {
+                    ret: in.copy_ret(f) = undefined,
+                    v: @TypeOf(args),
+                    lower: opts.ex.loop_opts.idx,
+                    upper: opts.ex.loop_opts.idx,
+                    increment: opts.ex.loop_opts.idx,
+                };
+                const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                common.make_proc_bind(&id, opts.proc_bind);
+                const outline = common.parallel_outline(f, @TypeOf(ret), opts).loop_outline;
 
                 kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
 
@@ -115,71 +260,33 @@ pub fn parallel(comptime opts: parallel_opts) type {
     }
 }
 
-inline fn parallel_outline(
-    comptime f: anytype,
-    comptime R: type,
-    comptime opts: parallel_opts,
-) type {
-    const static = struct {
-        var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-    };
-
-    return opaque {
-        fn outline(
-            gtid: *c_int,
-            btid: *c_int,
-            args: *R,
-        ) callconv(.C) void {
-            global_ctx = .{
-                .global_tid = gtid.*,
-                .bound_tid = btid.*,
-            };
-
-            var private_copy = in.deep_copy(args.v.private);
-            var reduction_copy = in.deep_copy(args.v.reduction);
-            const true_args = args.v.shared ++ private_copy ++ reduction_copy;
-
-            if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
-                args.ret = @call(.always_inline, f, true_args) catch |err| err;
-            } else {
-                args.ret = @call(.always_inline, f, true_args);
-            }
-
-            if (opts.reduction.len > 0) {
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
-                reduce(&id, args.v.reduction, reduction_copy, opts.reduction, &static.lck);
-            }
-
-            return;
-        }
-    };
-}
-
 inline fn reduce(
     comptime id: *const kmp.ident_t,
+    comptime nowait: bool,
     out_reduction: anytype,
     copies: @TypeOf(out_reduction),
     comptime operators: []const kmp.reduction_operators,
     lck: *kmp.critical_name_t,
 ) void {
-    const res = kmp.reduce_nowait(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, global_ctx.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck);
-    if (res == 2) {
-        @panic("Atomic reduce not implemented");
-    }
+    const res = if (nowait)
+        kmp.reduce_nowait(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, global_ctx.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck)
+    else
+        kmp.reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, global_ctx.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck);
 
-    if (res == 0) {
-        return;
+    switch (res) {
+        1 => {
+            kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
+            kmp.end_reduce_nowait(id, global_ctx.global_tid, lck);
+        },
+        2 => {
+            kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize_atomic(out_reduction, copies);
+            return;
+        },
+        else => return,
     }
-
-    kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
-    kmp.end_reduce_nowait(id, global_ctx.global_tid, lck);
 }
 
 pub inline fn loop(
-    comptime index_type: type,
     comptime opts: parallel_for_opts,
 ) type {
     const static = struct {
@@ -197,15 +304,15 @@ pub inline fn loop(
         }
     };
 
-    if (!std.meta.trait.isSignedInt(index_type) and !std.meta.trait.isUnsignedInt(index_type)) {
-        @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(index_type));
+    if (!std.meta.trait.isSignedInt(opts.idx) and !std.meta.trait.isUnsignedInt(opts.idx)) {
+        @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(opts.idx));
     }
     if (!opts.ordered and opts.sched == .static) {
         return struct {
             pub inline fn run(
-                lower: index_type,
-                upper: index_type,
-                increment: index_type,
+                lower: opts.idx,
+                upper: opts.idx,
+                increment: opts.idx,
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
@@ -219,8 +326,8 @@ pub inline fn loop(
                 in.check_fn_signature(f);
 
                 const f_type_info = @typeInfo(@TypeOf(f));
-                if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != index_type) {
-                    @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(index_type) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                if (f_type_info.Fn.params.len < 1) {
+                    @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
                 }
 
                 const id = .{
@@ -230,32 +337,21 @@ pub inline fn loop(
 
                 // This is `1` iside the last thread execution
                 var last_iter: c_int = 0;
-                var low: index_type = lower;
-                var upp: index_type = upper - 1;
-                var stri: index_type = 1;
-                const incr: index_type = increment;
+                var low: opts.idx = lower;
+                var upp: opts.idx = upper - 1;
+                var stri: opts.idx = 1;
+                const incr: opts.idx = increment;
 
-                kmp.for_static_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
-                defer {
-                    const id_fini = .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-                        .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-                        .reserved_3 = 0x1b,
-                    };
-                    kmp.for_static_fini(&id_fini, global_ctx.global_tid);
-                    if (!opts.nowait) {
-                        barrier();
-                    }
-                }
+                kmp.for_static_init(opts.idx, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
                 if (opts.chunk_size > 1) {
                     while (low + opts.chunk_size < upper) : (low += stri) {
                         inline for (0..opts.chunk_size) |i| {
                             if (type_info == .ErrorUnion) {
-                                _ = @call(.always_inline, f, .{low + @as(index_type, i)} ++ true_args) catch |err| err;
+                                _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ true_args) catch |err| err;
                             } else {
-                                _ = @call(.always_inline, f, .{low + @as(index_type, i)} ++ true_args);
+                                _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ true_args);
                             }
                         }
                     }
@@ -267,7 +363,7 @@ pub inline fn loop(
                         }
                     }
                 } else {
-                    var i: index_type = low;
+                    var i: opts.idx = low;
                     while (i <= upp) : (i += incr) {
                         if (type_info == .ErrorUnion) {
                             _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
@@ -277,12 +373,23 @@ pub inline fn loop(
                     }
                 }
 
+                const id_fini = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                    .reserved_3 = 0x1b,
+                };
+                kmp.for_static_fini(&id_fini, global_ctx.global_tid);
+
+                if (!opts.nowait) {
+                    barrier();
+                }
+
                 if (opts.reduction.len > 0) {
-                    const redid: kmp.ident_t = .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    const redid: kmp.ident_t = comptime .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | if (opts.nowait) @intFromEnum(kmp.ident_flags.IDENT_ATOMIC_REDUCE) else 0,
                         .psource = "parallel" ++ @typeName(@TypeOf(f)),
                     };
-                    reduce(&redid, splat.reduction, reduction_copy, opts.reduction, &static.lck);
+                    reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.reduction, &static.lck);
                 }
 
                 return undefined;
@@ -291,9 +398,9 @@ pub inline fn loop(
     } else {
         return struct {
             pub inline fn run(
-                lower: index_type,
-                upper: index_type,
-                increment: index_type,
+                lower: opts.idx,
+                upper: opts.idx,
+                increment: opts.idx,
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
@@ -307,8 +414,8 @@ pub inline fn loop(
                 in.check_fn_signature(f);
 
                 const f_type_info = @typeInfo(@TypeOf(f));
-                if (f_type_info.Fn.params.len < 1 or f_type_info.Fn.params[0].type.? != index_type) {
-                    @compileError("Expected function with signature `inline fn(numeric, ...)` or `inline fn(numeric, *omp.ctx, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(index_type) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                if (f_type_info.Fn.params.len < 1) {
+                    @compileError("Expected function with signature `inline fn(numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
                 }
 
                 const id = .{
@@ -318,22 +425,17 @@ pub inline fn loop(
 
                 // This is `1` iside the last thread execution
                 var last_iter: c_int = 0;
-                var low: index_type = lower;
-                var upp: index_type = upper - 1;
-                var stri: index_type = 1;
-                var incr: index_type = increment;
-                kmp.dispatch_init(index_type, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
-                defer {
-                    if (!opts.nowait) {
-                        barrier();
-                    }
-                }
+                var low: opts.idx = lower;
+                var upp: opts.idx = upper - 1;
+                var stri: opts.idx = 1;
+                var incr: opts.idx = increment;
+                kmp.dispatch_init(opts.idx, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
 
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-                while (kmp.dispatch_next(index_type, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
-                    defer kmp.dispatch_fini(index_type, &id, global_ctx.global_tid);
+                while (kmp.dispatch_next(opts.idx, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
+                    defer kmp.dispatch_fini(opts.idx, &id, global_ctx.global_tid);
 
-                    var i: index_type = low;
+                    var i: opts.idx = low;
                     while (i <= upp) : (i += incr) {
                         if (type_info == .ErrorUnion) {
                             _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
@@ -342,12 +444,17 @@ pub inline fn loop(
                         }
                     }
                 }
+
+                if (!opts.nowait) {
+                    barrier();
+                }
+
                 if (opts.reduction.len > 0) {
-                    const redid: kmp.ident_t = .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    const redid: kmp.ident_t = comptime .{
+                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | if (opts.nowait) @intFromEnum(kmp.ident_flags.IDENT_ATOMIC_REDUCE) else 0,
                         .psource = "parallel" ++ @typeName(@TypeOf(f)),
                     };
-                    reduce(&redid, splat.reduction, reduction_copy, opts.reduction, &static.lck);
+                    reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.ex.reduction, &static.lck);
                 }
 
                 return undefined;

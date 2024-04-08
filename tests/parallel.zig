@@ -9,7 +9,7 @@ fn test_omp_parallel_default() !bool {
 
     omp.parallel(.{}).run(.{ .shared = .{&sum}, .private = .{&mysum} }, struct {
         fn f(f_sum: *u32, f_mysum: *u32) void {
-            omp.loop(u32, .{}).run(0, params.loop_count + 1, 1, .{ .shared = .{f_mysum} }, struct {
+            omp.loop(.{ .idx = u32 }).run(0, params.loop_count + 1, 1, .{ .shared = .{f_mysum} }, struct {
                 fn f(i: u32, ff_mysum: *u32) void {
                     ff_mysum.* += i;
                 }
@@ -140,7 +140,7 @@ fn test_omp_parallel_private() !bool {
         fn f(f_sum: *u32, f_num_threads: *u32, f_sum1: *u32) void {
             f_sum1.* = 7;
 
-            omp.loop(u32, .{}).run(1, 1000, 1, .{ .shared = .{f_sum1} }, struct {
+            omp.loop(.{ .idx = u32 }).run(1, 1000, 1, .{ .shared = .{f_sum1} }, struct {
                 fn f(i: u32, ff_sum1: *u32) void {
                     ff_sum1.* += i;
                 }
