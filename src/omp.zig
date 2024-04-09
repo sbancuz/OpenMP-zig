@@ -549,6 +549,17 @@ pub inline fn single() type {
     };
 }
 
+pub inline fn master() type {
+    return struct {
+        pub inline fn run(
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            return masked.run(only_master, args, f);
+        }
+    };
+}
+
 pub const only_master: c_int = 0;
 pub inline fn masked() type {
     return struct {
