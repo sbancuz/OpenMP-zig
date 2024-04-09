@@ -19,6 +19,10 @@
               zig
 
               llvmPackages_18.openmp
+              llvmPackages_18.clang
+              llvmPackages_18.llvm
+              perl
+              cmake
             ];
         };
       }

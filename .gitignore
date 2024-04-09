@@ -6,3 +6,5 @@ flake.lock
 /omp.rep/
 omp.gpr
 omp.loc*
+
+/llvm-project/

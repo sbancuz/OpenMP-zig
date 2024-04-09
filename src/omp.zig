@@ -165,7 +165,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
 
                 const ret = common.make_args(args, f);
                 const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
                 common.make_proc_bind(&id, opts.proc_bind);
@@ -196,7 +196,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
 
                 const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
                 common.make_proc_bind(&id, opts.proc_bind);
@@ -217,7 +217,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
 
                 const ret = common.make_args(args, f);
                 const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
                 common.make_proc_bind(&id, opts.proc_bind);
@@ -246,7 +246,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 };
                 const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
                 const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
                 common.make_proc_bind(&id, opts.proc_bind);
@@ -276,7 +276,12 @@ inline fn reduce(
     switch (res) {
         1 => {
             kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
-            kmp.end_reduce_nowait(id, global_ctx.global_tid, lck);
+            const end_id = comptime .{
+                .flags = id.*.flags,
+                .psource = id.*.psource,
+                .reserved_3 = 0x1b,
+            };
+            kmp.end_reduce_nowait(&end_id, global_ctx.global_tid, lck);
         },
         2 => {
             kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize_atomic(out_reduction, copies);
@@ -375,19 +380,20 @@ pub inline fn loop(
 
                 const id_fini = .{
                     .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                    .psource = "parallel_for_fini" ++ @typeName(@TypeOf(f)),
                     .reserved_3 = 0x1b,
                 };
                 kmp.for_static_fini(&id_fini, global_ctx.global_tid);
 
-                if (!opts.nowait) {
-                    barrier();
-                }
+                // TODO: Figure out a way to remove this when not needed, somehow there is a race condition even though it compiles to the same code as the llvm implementation
+                // if (!opts.nowait) {
+                barrier();
+                // }
 
                 if (opts.reduction.len > 0) {
                     const redid: kmp.ident_t = comptime .{
                         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | if (opts.nowait) @intFromEnum(kmp.ident_flags.IDENT_ATOMIC_REDUCE) else 0,
-                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                        .psource = id_fini.psource,
                     };
                     reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.reduction, &static.lck);
                 }
@@ -452,9 +458,9 @@ pub inline fn loop(
                 if (opts.reduction.len > 0) {
                     const redid: kmp.ident_t = comptime .{
                         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | if (opts.nowait) @intFromEnum(kmp.ident_flags.IDENT_ATOMIC_REDUCE) else 0,
-                        .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                        .psource = "parallel_for_red" ++ @typeName(@TypeOf(f)),
                     };
-                    reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.ex.reduction, &static.lck);
+                    reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.reduction, &static.lck);
                 }
 
                 return undefined;
