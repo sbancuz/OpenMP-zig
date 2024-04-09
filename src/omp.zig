@@ -81,6 +81,65 @@ pub fn parallel(comptime opts: parallel_opts) type {
             }
         }
 
+        inline fn parallel_impl(
+            args: anytype,
+            comptime f: anytype,
+            comptime has_cond: bool,
+            cond: bool,
+        ) in.copy_ret(f) {
+            in.check_fn_signature(f);
+
+            const ret = make_args(args, f);
+            const id: kmp.ident_t = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                .psource = "parallel" ++ @typeName(@TypeOf(f)),
+            };
+            make_proc_bind(&id, opts.proc_bind);
+            const outline = parallel_outline(f, @TypeOf(ret), opts).outline;
+
+            if (has_cond) {
+                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
+            } else {
+                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
+            }
+
+            return ret.ret;
+        }
+
+        inline fn parallel_loop_impl(
+            lower: opts.ex.loop_opts.idx,
+            upper: opts.ex.loop_opts.idx,
+            increment: opts.ex.loop_opts.idx,
+            args: anytype,
+            comptime f: anytype,
+            comptime has_cond: bool,
+            cond: bool,
+        ) in.copy_ret(f) {
+            in.check_fn_signature(f);
+
+            const ret_t = struct {
+                ret: in.copy_ret(f) = undefined,
+                v: @TypeOf(args),
+                lower: opts.ex.loop_opts.idx,
+                upper: opts.ex.loop_opts.idx,
+                increment: opts.ex.loop_opts.idx,
+            };
+            const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
+
+            const id: kmp.ident_t = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                .psource = "parallel" ++ @typeName(@TypeOf(f)),
+            };
+            make_proc_bind(&id, opts.proc_bind);
+            const outline = parallel_outline(f, @TypeOf(ret), opts).loop_outline;
+            if (has_cond) {
+                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
+            } else {
+                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
+            }
+            return ret.ret;
+        }
+
         inline fn parallel_outline(
             comptime f: anytype,
             comptime R: type,
@@ -161,19 +220,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
-                in.check_fn_signature(f);
-
-                const ret = common.make_args(args, f);
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
-                common.make_proc_bind(&id, opts.proc_bind);
-                const outline = common.parallel_outline(f, @TypeOf(ret), opts).outline;
-
-                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
-
-                return ret.ret;
+                return common.parallel_impl(args, f, true, cond);
             }
 
             pub inline fn run_loop(
@@ -184,27 +231,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
-                in.check_fn_signature(f);
-
-                const ret_t = struct {
-                    ret: in.copy_ret(f) = undefined,
-                    v: @TypeOf(args),
-                    lower: opts.ex.loop_opts.idx,
-                    upper: opts.ex.loop_opts.idx,
-                    increment: opts.ex.loop_opts.idx,
-                };
-                const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
-
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
-                common.make_proc_bind(&id, opts.proc_bind);
-                const outline = common.parallel_outline(f, @TypeOf(ret), opts).loop_outline;
-
-                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
-
-                return ret.ret;
+                return common.parallel_loop_impl(lower, upper, increment, args, f, true, cond);
             }
         };
     } else {
@@ -213,19 +240,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
-                in.check_fn_signature(f);
-
-                const ret = common.make_args(args, f);
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
-                common.make_proc_bind(&id, opts.proc_bind);
-                const outline = common.parallel_outline(f, @TypeOf(ret), opts).outline;
-
-                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
-
-                return ret.ret;
+                return common.parallel_impl(args, f, false, false);
             }
 
             pub inline fn run_loop(
@@ -235,26 +250,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 args: anytype,
                 comptime f: anytype,
             ) in.copy_ret(f) {
-                in.check_fn_signature(f);
-
-                const ret_t = struct {
-                    ret: in.copy_ret(f) = undefined,
-                    v: @TypeOf(args),
-                    lower: opts.ex.loop_opts.idx,
-                    upper: opts.ex.loop_opts.idx,
-                    increment: opts.ex.loop_opts.idx,
-                };
-                const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
-                common.make_proc_bind(&id, opts.proc_bind);
-                const outline = common.parallel_outline(f, @TypeOf(ret), opts).loop_outline;
-
-                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
-
-                return ret.ret;
+                return common.parallel_loop_impl(lower, upper, increment, args, f, false, false);
             }
         };
     }
@@ -380,14 +376,14 @@ pub inline fn loop(
 
                 const id_fini = .{
                     .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-                    .psource = "parallel_for_fini" ++ @typeName(@TypeOf(f)),
+                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
                     .reserved_3 = 0x1b,
                 };
                 kmp.for_static_fini(&id_fini, global_ctx.global_tid);
 
                 // TODO: Figure out a way to remove this when not needed, somehow there is a race condition even though it compiles to the same code as the llvm implementation
                 // if (!opts.nowait) {
-                barrier();
+                // barrier();
                 // }
 
                 if (opts.reduction.len > 0) {
