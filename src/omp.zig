@@ -4,7 +4,7 @@ const c = @cImport({
     @cInclude("omp.h");
     @cInclude("omp-tools.h");
 });
-
+const omp = @This();
 const in = @import("input_handler.zig");
 pub const proc_bind = enum(c_int) {
     default = 1,
@@ -26,10 +26,7 @@ pub const reduction_operators = kmp.reduction_operators;
 pub const parallel_opts = struct {
     iff: bool = false,
     proc_bind: proc_bind = .default,
-    ex: union {
-        reduction: []const reduction_operators,
-        loop_opts: parallel_for_opts,
-    } = .{ .reduction = &[0]reduction_operators{} },
+    reduction: []const reduction_operators = &[0]reduction_operators{},
 };
 
 pub const parallel_for_opts = struct {
@@ -52,17 +49,47 @@ pub const critical_options = struct {
 
 threadlocal var global_ctx: ctx = undefined;
 
-pub fn parallel(comptime opts: parallel_opts) type {
-    const common = struct {
-        const pri_loop = loop(.{
-            .idx = opts.ex.loop_opts.idx,
-            .sched = opts.ex.loop_opts.sched,
-            .chunk_size = opts.ex.loop_opts.chunk_size,
-            .reduction = opts.ex.loop_opts.reduction,
-            .ordered = opts.ex.loop_opts.ordered,
-            .nowait = true,
-        });
+inline fn in_workshare(
+    comptime red: []const kmp.reduction_operators,
+    comptime f: anytype,
+) type {
+    return struct {
+        const static = struct {
+            var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
+        };
 
+        pub inline fn run(
+            comptime is_omp_func: bool,
+            pre: anytype,
+            args: anytype,
+            post: anytype,
+        ) in.copy_ret(f) {
+            const private_copy = in.deep_copy(args.private);
+            const reduction_copy = in.deep_copy(args.reduction);
+            const true_args = if (!is_omp_func) pre ++ .{args.shared ++ private_copy ++ reduction_copy} ++ post else pre ++ args.shared ++ private_copy ++ reduction_copy ++ post;
+
+            const ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
+                @call(.always_inline, f, true_args) catch |err| err
+            else
+                @call(.always_inline, f, true_args);
+
+            if (red.len > 0) {
+                const id: kmp.ident_t = .{
+                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
+                };
+                reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
+            }
+
+            return ret;
+        }
+    };
+}
+
+pub inline fn parallel(
+    comptime opts: parallel_opts,
+) type {
+    const common = struct {
         inline fn make_args(
             args: anytype,
             comptime f: anytype,
@@ -81,6 +108,50 @@ pub fn parallel(comptime opts: parallel_opts) type {
             }
         }
 
+        inline fn parallel_outline(
+            comptime f: anytype,
+            comptime R: type,
+            comptime in_opts: parallel_opts,
+        ) type {
+            return opaque {
+                fn workshare_outline(
+                    gtid: *c_int,
+                    btid: *c_int,
+                    args: *R,
+                ) callconv(.C) void {
+                    global_ctx = .{
+                        .global_tid = gtid.*,
+                        .bound_tid = btid.*,
+                    };
+
+                    args.ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
+                        in_workshare(in_opts.reduction, f).run(true, .{}, args.v, .{}) catch |err| err
+                    else
+                        in_workshare(in_opts.reduction, f).run(true, .{}, args.v, .{});
+
+                    return;
+                }
+
+                fn generic_outline(
+                    gtid: *c_int,
+                    btid: *c_int,
+                    args: *R,
+                ) callconv(.C) void {
+                    global_ctx = .{
+                        .global_tid = gtid.*,
+                        .bound_tid = btid.*,
+                    };
+
+                    args.ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
+                        @call(.always_inline, f, args.*.v) catch |err| err
+                    else
+                        @call(.always_inline, f, args.*.v);
+
+                    return;
+                }
+            };
+        }
+
         inline fn parallel_impl(
             args: anytype,
             comptime f: anytype,
@@ -95,7 +166,7 @@ pub fn parallel(comptime opts: parallel_opts) type {
                 .psource = "parallel" ++ @typeName(@TypeOf(f)),
             };
             make_proc_bind(&id, opts.proc_bind);
-            const outline = parallel_outline(f, @TypeOf(ret), opts).outline;
+            const outline = parallel_outline(f, @TypeOf(ret), opts).workshare_outline;
 
             if (has_cond) {
                 kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
@@ -107,11 +178,13 @@ pub fn parallel(comptime opts: parallel_opts) type {
         }
 
         inline fn parallel_loop_impl(
-            lower: opts.ex.loop_opts.idx,
-            upper: opts.ex.loop_opts.idx,
-            increment: opts.ex.loop_opts.idx,
+            comptime T: type,
+            lower: T,
+            upper: T,
+            increment: T,
             args: anytype,
             comptime f: anytype,
+            comptime inner_fn: anytype,
             comptime has_cond: bool,
             cond: bool,
         ) in.copy_ret(f) {
@@ -119,19 +192,16 @@ pub fn parallel(comptime opts: parallel_opts) type {
 
             const ret_t = struct {
                 ret: in.copy_ret(f) = undefined,
-                v: @TypeOf(args),
-                lower: opts.ex.loop_opts.idx,
-                upper: opts.ex.loop_opts.idx,
-                increment: opts.ex.loop_opts.idx,
+                v: @TypeOf(.{ args, lower, upper, increment, inner_fn }),
             };
-            const ret: ret_t = .{ .ret = undefined, .v = args, .lower = lower, .upper = upper, .increment = increment };
+            const ret: ret_t = .{ .ret = undefined, .v = .{ args, lower, upper, increment, inner_fn } };
 
             const id: kmp.ident_t = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "parallel" ++ @typeName(@TypeOf(f)),
             };
             make_proc_bind(&id, opts.proc_bind);
-            const outline = parallel_outline(f, @TypeOf(ret), opts).loop_outline;
+            const outline = parallel_outline(f, @TypeOf(ret), opts).generic_outline;
             if (has_cond) {
                 kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
             } else {
@@ -139,121 +209,61 @@ pub fn parallel(comptime opts: parallel_opts) type {
             }
             return ret.ret;
         }
+    };
 
-        inline fn parallel_outline(
+    const api = struct {
+        pub inline fn run_if(
+            args: anytype,
+            cond: bool,
             comptime f: anytype,
-            comptime R: type,
-            comptime in_opts: parallel_opts,
+        ) in.copy_ret(f) {
+            return common.parallel_impl(args, f, true, cond);
+        }
+
+        pub inline fn run(
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            return common.parallel_impl(args, f, false, false);
+        }
+
+        pub inline fn loop(
+            comptime loop_args: parallel_for_opts,
         ) type {
-            const static = struct {
-                var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-            };
-
-            return opaque {
-                fn outline(
-                    gtid: *c_int,
-                    btid: *c_int,
-                    args: *R,
-                ) callconv(.C) void {
-                    global_ctx = .{
-                        .global_tid = gtid.*,
-                        .bound_tid = btid.*,
-                    };
-
-                    var private_copy = in.deep_copy(args.v.private);
-                    var reduction_copy = in.deep_copy(args.v.reduction);
-                    const true_args = args.v.shared ++ private_copy ++ reduction_copy;
-
-                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
-                        args.ret = @call(.always_inline, f, true_args) catch |err| err;
-                    } else {
-                        args.ret = @call(.always_inline, f, true_args);
-                    }
-
-                    if (opts.ex.reduction.len > 0) {
-                        const id: kmp.ident_t = .{
-                            .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                            .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                        };
-                        reduce(&id, true, args.v.reduction, reduction_copy, in_opts.ex.reduction, &static.lck);
-                    }
-
-                    return;
+            return struct {
+                inline fn _run_if(
+                    args: anytype,
+                    cond: bool,
+                    lower: loop_args.idx,
+                    upper: loop_args.idx,
+                    increment: loop_args.idx,
+                    comptime f: anytype,
+                ) in.copy_ret(f) {
+                    return common.parallel_loop_impl(loop_args.idx, lower, upper, increment, args, omp.loop(loop_args).run, f, true, cond);
                 }
 
-                fn loop_outline(
-                    gtid: *c_int,
-                    btid: *c_int,
-                    args: *R,
-                ) callconv(.C) void {
-                    global_ctx = .{
-                        .global_tid = gtid.*,
-                        .bound_tid = btid.*,
-                    };
-
-                    const new_opts = .{
-                        .idx = in_opts.ex.loop_opts.idx,
-                        .sched = in_opts.ex.loop_opts.sched,
-                        .chunk_size = in_opts.ex.loop_opts.chunk_size,
-                        .ordered = in_opts.ex.loop_opts.ordered,
-                        .reduction = in_opts.ex.loop_opts.reduction,
-                        .nowait = true,
-                    };
-                    _ = new_opts;
-
-                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
-                        // TODO: Figure out how to handle this
-                        _ = pri_loop.run(args.lower, args.upper, args.increment, args.v, f) catch |err| err;
-                    } else {
-                        pri_loop.run(args.lower, args.upper, args.increment, args.v, f);
-                    }
-
-                    return;
+                inline fn _run(
+                    args: anytype,
+                    lower: loop_args.idx,
+                    upper: loop_args.idx,
+                    increment: loop_args.idx,
+                    comptime f: anytype,
+                ) in.copy_ret(f) {
+                    return common.parallel_loop_impl(loop_args.idx, lower, upper, increment, args, omp.loop(loop_args).run, f, false, false);
                 }
+
+                pub const run = if (opts.iff) _run_if else _run;
             };
         }
     };
-    if (opts.iff) {
-        return struct {
-            pub inline fn run(
-                cond: bool,
-                args: anytype,
-                comptime f: anytype,
-            ) in.copy_ret(f) {
-                return common.parallel_impl(args, f, true, cond);
-            }
 
-            pub inline fn run_loop(
-                cond: bool,
-                lower: opts.ex.loop_opts.idx,
-                upper: opts.ex.loop_opts.idx,
-                increment: opts.ex.loop_opts.idx,
-                args: anytype,
-                comptime f: anytype,
-            ) in.copy_ret(f) {
-                return common.parallel_loop_impl(lower, upper, increment, args, f, true, cond);
-            }
-        };
-    } else {
-        return struct {
-            pub inline fn run(
-                args: anytype,
-                comptime f: anytype,
-            ) in.copy_ret(f) {
-                return common.parallel_impl(args, f, false, false);
-            }
+    return struct {
+        // omp.para(...).run(...);
+        pub const run = if (opts.iff) api.run_if else api.run;
 
-            pub inline fn run_loop(
-                lower: opts.ex.loop_opts.idx,
-                upper: opts.ex.loop_opts.idx,
-                increment: opts.ex.loop_opts.idx,
-                args: anytype,
-                comptime f: anytype,
-            ) in.copy_ret(f) {
-                return common.parallel_loop_impl(lower, upper, increment, args, f, false, false);
-            }
-        };
-    }
+        // omp.para(...).loop(...).run(...);
+        pub const loop = api.loop;
+    };
 }
 
 inline fn reduce(
@@ -290,9 +300,6 @@ inline fn reduce(
 pub inline fn loop(
     comptime opts: parallel_for_opts,
 ) type {
-    const static = struct {
-        var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-    };
     const common = struct {
         pub fn to_kmp_sched(comptime sched: schedule) kmp.sched_t {
             switch (sched) {
@@ -303,166 +310,153 @@ pub inline fn loop(
                 else => unreachable,
             }
         }
+
+        inline fn static_impl(
+            args: anytype,
+            lower: opts.idx,
+            upper: opts.idx,
+            increment: opts.idx,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            const id = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+            };
+
+            // This is `1` iside the last thread execution
+            var last_iter: c_int = 0;
+            var low: opts.idx = lower;
+            var upp: opts.idx = upper - 1;
+            var stri: opts.idx = 1;
+            const incr: opts.idx = increment;
+
+            kmp.for_static_init(opts.idx, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
+
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            if (opts.chunk_size > 1) {
+                while (low + opts.chunk_size < upper) : (low += stri) {
+                    inline for (0..opts.chunk_size) |i| {
+                        if (type_info == .ErrorUnion) {
+                            _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ args) catch |err| err;
+                        } else {
+                            _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ args);
+                        }
+                    }
+                }
+                while (low < upper) : (low += incr) {
+                    if (type_info == .ErrorUnion) {
+                        _ = @call(.always_inline, f, .{low} ++ args) catch |err| err;
+                    } else {
+                        _ = @call(.always_inline, f, .{low} ++ args);
+                    }
+                }
+            } else {
+                var i: opts.idx = low;
+                while (i <= upp) : (i += incr) {
+                    if (type_info == .ErrorUnion) {
+                        _ = @call(.always_inline, f, .{i} ++ args) catch |err| err;
+                    } else {
+                        _ = @call(.always_inline, f, .{i} ++ args);
+                    }
+                }
+            }
+
+            const id_fini = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+                .reserved_3 = 0x1b,
+            };
+            kmp.for_static_fini(&id_fini, global_ctx.global_tid);
+
+            // TODO: Figure out a way to remove this when not needed, somehow there is a race condition even though it compiles to the same code as the llvm implementation
+            // if (!opts.nowait) {
+            barrier();
+            // }
+        }
+
+        pub inline fn dynamic_impl(
+            args: anytype,
+            lower: opts.idx,
+            upper: opts.idx,
+            increment: opts.idx,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            const id = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
+            };
+
+            // This is `1` iside the last thread execution
+            var last_iter: c_int = 0;
+            var low: opts.idx = lower;
+            var upp: opts.idx = upper - 1;
+            var stri: opts.idx = 1;
+            const incr: opts.idx = increment;
+            kmp.dispatch_init(opts.idx, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
+
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            while (kmp.dispatch_next(opts.idx, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
+                defer kmp.dispatch_fini(opts.idx, &id, global_ctx.global_tid);
+
+                var i: opts.idx = low;
+                while (i <= upp) : (i += incr) {
+                    if (type_info == .ErrorUnion) {
+                        _ = @call(.always_inline, f, .{i} ++ args) catch |err| err;
+                    } else {
+                        _ = @call(.always_inline, f, .{i} ++ args);
+                    }
+                }
+            }
+
+            if (!opts.nowait) {
+                barrier();
+            }
+        }
+
+        pub inline fn static(
+            args: anytype,
+            lower: opts.idx,
+            upper: opts.idx,
+            increment: opts.idx,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            in.check_args(@TypeOf(args));
+            in.check_fn_signature(f);
+
+            const f_type_info = @typeInfo(@TypeOf(f));
+            if (f_type_info.Fn.params.len < 1) {
+                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+            }
+
+            in_workshare(opts.reduction, static_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
+
+            return undefined;
+        }
+
+        pub inline fn dynamic(
+            args: anytype,
+            lower: opts.idx,
+            upper: opts.idx,
+            increment: opts.idx,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            in.check_args(@TypeOf(args));
+            in.check_fn_signature(f);
+
+            const f_type_info = @typeInfo(@TypeOf(f));
+            if (f_type_info.Fn.params.len < 1) {
+                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+            }
+
+            in_workshare(opts.reduction, dynamic_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
+
+            return undefined;
+        }
     };
 
-    if (!std.meta.trait.isSignedInt(opts.idx) and !std.meta.trait.isUnsignedInt(opts.idx)) {
-        @compileError("Tried to loop over a comptime/non-integer type " ++ @typeName(opts.idx));
-    }
-    if (!opts.ordered and opts.sched == .static) {
-        return struct {
-            pub inline fn run(
-                lower: opts.idx,
-                upper: opts.idx,
-                increment: opts.idx,
-                args: anytype,
-                comptime f: anytype,
-            ) in.copy_ret(f) {
-                in.check_args(@TypeOf(args));
-
-                const splat = in.normalize_args(args);
-                var private_copy = in.deep_copy(splat.private);
-                var reduction_copy = in.deep_copy(splat.reduction);
-                const true_args = splat.shared ++ private_copy ++ reduction_copy;
-
-                in.check_fn_signature(f);
-
-                const f_type_info = @typeInfo(@TypeOf(f));
-                if (f_type_info.Fn.params.len < 1) {
-                    @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
-                }
-
-                const id = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-                };
-
-                // This is `1` iside the last thread execution
-                var last_iter: c_int = 0;
-                var low: opts.idx = lower;
-                var upp: opts.idx = upper - 1;
-                var stri: opts.idx = 1;
-                const incr: opts.idx = increment;
-
-                kmp.for_static_init(opts.idx, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
-
-                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-                if (opts.chunk_size > 1) {
-                    while (low + opts.chunk_size < upper) : (low += stri) {
-                        inline for (0..opts.chunk_size) |i| {
-                            if (type_info == .ErrorUnion) {
-                                _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ true_args) catch |err| err;
-                            } else {
-                                _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ true_args);
-                            }
-                        }
-                    }
-                    while (low < upper) : (low += incr) {
-                        if (type_info == .ErrorUnion) {
-                            _ = @call(.always_inline, f, .{low} ++ true_args) catch |err| err;
-                        } else {
-                            _ = @call(.always_inline, f, .{low} ++ true_args);
-                        }
-                    }
-                } else {
-                    var i: opts.idx = low;
-                    while (i <= upp) : (i += incr) {
-                        if (type_info == .ErrorUnion) {
-                            _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
-                        } else {
-                            _ = @call(.always_inline, f, .{i} ++ true_args);
-                        }
-                    }
-                }
-
-                const id_fini = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-                    .reserved_3 = 0x1b,
-                };
-                kmp.for_static_fini(&id_fini, global_ctx.global_tid);
-
-                // TODO: Figure out a way to remove this when not needed, somehow there is a race condition even though it compiles to the same code as the llvm implementation
-                // if (!opts.nowait) {
-                // barrier();
-                // }
-
-                if (opts.reduction.len > 0) {
-                    const redid: kmp.ident_t = comptime .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | if (opts.nowait) @intFromEnum(kmp.ident_flags.IDENT_ATOMIC_REDUCE) else 0,
-                        .psource = id_fini.psource,
-                    };
-                    reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.reduction, &static.lck);
-                }
-
-                return undefined;
-            }
-        };
-    } else {
-        return struct {
-            pub inline fn run(
-                lower: opts.idx,
-                upper: opts.idx,
-                increment: opts.idx,
-                args: anytype,
-                comptime f: anytype,
-            ) in.copy_ret(f) {
-                in.check_args(@TypeOf(args));
-
-                const splat = in.normalize_args(args);
-                var private_copy = in.deep_copy(splat.private);
-                var reduction_copy = in.deep_copy(splat.reduction);
-                const true_args = splat.shared ++ private_copy ++ reduction_copy;
-
-                in.check_fn_signature(f);
-
-                const f_type_info = @typeInfo(@TypeOf(f));
-                if (f_type_info.Fn.params.len < 1) {
-                    @compileError("Expected function with signature `inline fn(numeric, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
-                }
-
-                const id = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
-                    .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-                };
-
-                // This is `1` iside the last thread execution
-                var last_iter: c_int = 0;
-                var low: opts.idx = lower;
-                var upp: opts.idx = upper - 1;
-                var stri: opts.idx = 1;
-                var incr: opts.idx = increment;
-                kmp.dispatch_init(opts.idx, &id, global_ctx.global_tid, common.to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
-
-                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-                while (kmp.dispatch_next(opts.idx, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
-                    defer kmp.dispatch_fini(opts.idx, &id, global_ctx.global_tid);
-
-                    var i: opts.idx = low;
-                    while (i <= upp) : (i += incr) {
-                        if (type_info == .ErrorUnion) {
-                            _ = @call(.always_inline, f, .{i} ++ true_args) catch |err| err;
-                        } else {
-                            _ = @call(.always_inline, f, .{i} ++ true_args);
-                        }
-                    }
-                }
-
-                if (!opts.nowait) {
-                    barrier();
-                }
-
-                if (opts.reduction.len > 0) {
-                    const redid: kmp.ident_t = comptime .{
-                        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | if (opts.nowait) @intFromEnum(kmp.ident_flags.IDENT_ATOMIC_REDUCE) else 0,
-                        .psource = "parallel_for_red" ++ @typeName(@TypeOf(f)),
-                    };
-                    reduce(&redid, opts.nowait, splat.reduction, reduction_copy, opts.reduction, &static.lck);
-                }
-
-                return undefined;
-            }
-        };
-    }
+    return struct {
+        pub const run = if (opts.chunk_size == 1 and opts.sched == .static) common.static else common.dynamic;
+    };
 }
 
 pub inline fn barrier() void {
@@ -564,8 +558,8 @@ pub const only_master: c_int = 0;
 pub inline fn masked() type {
     return struct {
         pub inline fn run(
-            filter: i32,
             args: anytype,
+            filter: i32,
             comptime f: anytype,
         ) in.copy_ret(f) {
             in.check_args(@TypeOf(args));

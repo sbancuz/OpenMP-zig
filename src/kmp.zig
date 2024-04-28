@@ -75,7 +75,7 @@ extern "C" fn __kmpc_for_static_init_4u(loc: *const ident_t, gtid: c_int, schedt
 extern "C" fn __kmpc_for_static_init_8(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_long, pupper: *c_long, pstride: *c_long, incr: c_long, chunk: c_long) void;
 extern "C" fn __kmpc_for_static_init_8u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_ulong, pupper: *c_ulong, pstride: *c_long, incr: c_long, chunk: c_long) void;
 pub inline fn for_static_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedtype: sched_t, plastiter: *c_int, plower: *T, pupper: *T, pstride: *T, incr: T, chunk: T) void {
-    if (std.meta.trait.isSignedInt(T)) {
+    if (@typeInfo(T).Int.signedness == .signed)
         if (@typeInfo(T).Int.bits <= 32) {
             __kmpc_for_static_init_4(loc, gtid, @intFromEnum(schedtype), plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -83,7 +83,7 @@ pub inline fn for_static_init(comptime T: type, comptime loc: *const ident_t, gt
         } else {
             @compileError("Unsupported integer size");
         }
-    } else if (std.meta.trait.isUnsignedInt(T)) {
+    else if (@typeInfo(T).Int.signedness == .unsigned) {
         if (@typeInfo(T).Int.bits <= 32) {
             __kmpc_for_static_init_4u(loc, gtid, @intFromEnum(schedtype), plastiter, @ptrCast(plower), @ptrCast(pupper), @ptrCast(pstride), @bitCast(incr), @bitCast(chunk));
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -106,7 +106,7 @@ extern "C" fn __kmpc_dispatch_init_4u(loc: *const ident_t, gtid: c_int, schedule
 extern "C" fn __kmpc_dispatch_init_8(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_long, ub: c_long, st: c_long, chunk: c_long) void;
 extern "C" fn __kmpc_dispatch_init_8u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_ulong, ub: c_ulong, st: c_long, chunk: c_long) void;
 pub inline fn dispatch_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedule: sched_t, lb: T, ub: T, st: T, chunk: T) void {
-    if (std.meta.trait.isSignedInt(T)) {
+    if (@typeInfo(T).Int.signedness == .signed) {
         if (@typeInfo(T).Int.bits <= 32) {
             __kmpc_dispatch_init_4(loc, gtid, @intFromEnum(schedule), @intCast(lb), @intCast(ub), @intCast(st), @intCast(chunk));
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -114,7 +114,7 @@ pub inline fn dispatch_init(comptime T: type, comptime loc: *const ident_t, gtid
         } else {
             @compileError("Unsupported integer size");
         }
-    } else if (std.meta.trait.isUnsignedInt(T)) {
+    } else if (@typeInfo(T).Int.signedness == .unsigned) {
         if (@typeInfo(T).Int.bits <= 32) {
             __kmpc_dispatch_init_4u(loc, gtid, @intFromEnum(schedule), @intCast(lb), @intCast(ub), @intCast(st), @intCast(chunk));
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -132,7 +132,7 @@ extern "C" fn __kmpc_dispatch_next_4u(loc: *const ident_t, gtid: c_int, p_last: 
 extern "C" fn __kmpc_dispatch_next_8(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_long, p_ub: *c_long, p_st: *c_long) c_int;
 extern "C" fn __kmpc_dispatch_next_8u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_ulong, p_ub: *c_ulong, p_st: *c_long) c_int;
 pub inline fn dispatch_next(comptime T: type, comptime loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *T, p_ub: *T, p_st: *T) c_int {
-    if (std.meta.trait.isSignedInt(T)) {
+    if (std.meta.trait.issingedInt(T)) {
         if (@typeInfo(T).Int.bits <= 32) {
             return __kmpc_dispatch_next_4(loc, gtid, p_last, @ptrCast(p_lb), @ptrCast(p_ub), @ptrCast(p_st));
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -158,7 +158,7 @@ extern "C" fn __kmpc_dispatch_fini_4u(loc: *const ident_t, gtid: c_int) void;
 extern "C" fn __kmpc_dispatch_fini_8(loc: *const ident_t, gtid: c_int) void;
 extern "C" fn __kmpc_dispatch_fini_8u(loc: *const ident_t, gtid: c_int) void;
 pub inline fn dispatch_fini(comptime T: type, comptime loc: *const ident_t, gtid: c_int) void {
-    if (std.meta.trait.isSignedInt(T)) {
+    if (@typeInfo(T).Int.signedness == .signed) {
         if (@typeInfo(T).Int.bits <= 32) {
             __kmpc_dispatch_fini_4(loc, gtid);
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -166,7 +166,7 @@ pub inline fn dispatch_fini(comptime T: type, comptime loc: *const ident_t, gtid
         } else {
             @compileError("Unsupported integer size");
         }
-    } else if (std.meta.trait.isUnsignedInt(T)) {
+    } else if (@typeInfo(T).Int.signedness == .unsigned) {
         if (@typeInfo(T).Int.bits <= 32) {
             __kmpc_dispatch_fini_4u(loc, gtid);
         } else if (@typeInfo(T).Int.bits <= 64) {
@@ -414,34 +414,34 @@ pub inline fn create_reduce(
                     const T = @typeInfo(type_field.type).Pointer.child;
                     switch (op) {
                         .plus => {
-                            _ = @atomicRmw(T, l, .Add, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Add, r.*, .acq_rel);
                         },
                         .mult => {
-                            _ = @atomicRmw(T, l, .Mul, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Mul, r.*, .acq_rel);
                         },
                         .minus => {
-                            _ = @atomicRmw(T, l, .Sub, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Sub, r.*, .acq_rel);
                         },
                         .bitwise_and => {
-                            _ = @atomicRmw(T, l, .And, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .And, r.*, .acq_rel);
                         },
                         .bitwise_or => {
-                            _ = @atomicRmw(T, l, .Or, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Or, r.*, .acq_rel);
                         },
                         .bitwise_xor => {
-                            _ = @atomicRmw(T, l, .Xor, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Xor, r.*, .acq_rel);
                         },
                         .logical_and => {
-                            _ = @atomicRmw(T, l, .And, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .And, r.*, .acq_rel);
                         },
                         .logical_or => {
-                            _ = @atomicRmw(T, l, .Or, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Or, r.*, .acq_rel);
                         },
                         .max => {
-                            _ = @atomicRmw(T, l, .Max, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Max, r.*, .acq_rel);
                         },
                         .min => {
-                            _ = @atomicRmw(T, l, .Min, r.*, .AcqRel);
+                            _ = @atomicRmw(T, l, .Min, r.*, .acq_rel);
                         },
                     }
                 }
@@ -455,43 +455,43 @@ pub inline fn create_reduce(
             inline for (reduce_operators, types) |op, T| {
                 switch (op) {
                     .plus => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* += @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .mult => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* *= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .minus => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* -= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .bitwise_and => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* &= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .bitwise_or => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* |= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .bitwise_xor => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* ^= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .logical_and => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = l.* and @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .logical_or => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = l.* or @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
                     },
                     .max => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = @max(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
                     },
                     .min => {
-                        var l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = @min(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
                     },
                 }

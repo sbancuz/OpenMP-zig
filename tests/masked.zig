@@ -7,21 +7,25 @@ fn test_omp_masked() bool {
     var executing_thread: i32 = -1;
     var tid_result: u32 = 0;
 
-    omp.parallel(.{}).run(.{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, struct {
+    omp.parallel(.{})
+        .run(.{ .shared = .{ &nthreads, &executing_thread, &tid_result } }, struct {
         fn f(f_nthreads: *u32, f_executing_thread: *i32, f_tid_result: *u32) void {
-            omp.masked().run(omp.only_master, .{ f_nthreads, f_executing_thread, f_tid_result }, struct {
+            omp.masked()
+                .run(.{ f_nthreads, f_executing_thread, f_tid_result }, omp.only_master, struct {
                 fn f(ff_nthreads: *u32, ff_executing_thread: *i32, ff_tid_result: *u32) void {
-                    var tid: i32 = @intCast(omp.get_thread_num());
+                    const tid: i32 = @intCast(omp.get_thread_num());
 
                     if (tid != 0) {
-                        omp.critical(.{}).run(.{ff_tid_result}, struct {
+                        omp.critical(.{})
+                            .run(.{ff_tid_result}, struct {
                             fn f(fff_tid_result: *u32) void {
                                 fff_tid_result.* += 1;
                             }
                         }.f);
                     }
 
-                    omp.critical(.{}).run(.{ff_nthreads}, struct {
+                    omp.critical(.{})
+                        .run(.{ff_nthreads}, struct {
                         fn f(fff_nthreads: *u32) void {
                             fff_nthreads.* += 1;
                         }

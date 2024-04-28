@@ -6,9 +6,10 @@ fn test_omp_barrier() bool {
     var result1: u32 = 0;
     var result2: u32 = 0;
 
-    omp.parallel(.{}).run(.{ .shared = .{ &result1, &result2 } }, struct {
+    omp.parallel(.{})
+        .run(.{ .shared = .{ &result1, &result2 } }, struct {
         fn f(f_result1: *u32, f_result2: *u32) void {
-            var rank: u32 = omp.get_thread_num();
+            const rank: u32 = omp.get_thread_num();
             if (rank == 1) {
                 std.time.sleep(params.sleep_time);
                 f_result2.* = 3;

@@ -4,7 +4,7 @@ const omp = @import("omp.zig");
 fn get_field_idx(comptime T: type, comptime field_name: []const u8) u32 {
     return comptime brk: {
         var idx: u32 = 0;
-        inline for (@typeInfo(T).Struct.fields) |field| {
+        for (@typeInfo(T).Struct.fields) |field| {
             if (std.mem.eql(u8, field_name, field.name)) {
                 break :brk idx;
             }
@@ -73,24 +73,33 @@ fn normalize_type(comptime T: type) type {
     };
 }
 
+pub fn has_field(comptime T: type, comptime field_name: []const u8) bool {
+    for (std.meta.fieldNames(T)) |field| {
+        if (std.mem.eql(u8, field_name, field)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
     const args_type = @TypeOf(args);
     const shared = val: {
-        if (comptime std.meta.trait.hasField("shared")(args_type)) {
+        if (comptime has_field(args_type, "shared")) {
             break :val args.shared;
         }
         break :val .{};
     };
 
     const private = val: {
-        if (comptime std.meta.trait.hasField("private")(args_type)) {
+        if (comptime has_field(args_type, "private")) {
             break :val args.private;
         }
         break :val .{};
     };
 
     const reduction = val: {
-        if (comptime std.meta.trait.hasField("reduction")(args_type)) {
+        if (comptime has_field(args_type, "reduction")) {
             break :val args.reduction;
         }
         break :val .{};
