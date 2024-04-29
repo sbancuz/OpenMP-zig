@@ -460,10 +460,21 @@ pub inline fn loop(
 
 pub inline fn barrier() void {
     const id: kmp.ident_t = .{
-        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "barrier",
+        .reserved_3 = 0x1b,
     };
     kmp.barrier(&id, global_ctx.global_tid);
+}
+
+pub inline fn flush(vars: anytype) void {
+    _ = vars; // Just ignore this, it's only used to define the ordering of operations when compiling, I hope...
+    const id: kmp.ident_t = .{
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+        .psource = "flush",
+        .reserved_3 = 37,
+    };
+    kmp.flush(&id);
 }
 
 pub inline fn critical(

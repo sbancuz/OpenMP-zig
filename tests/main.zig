@@ -5,6 +5,7 @@ pub const critical = @import("critical.zig");
 pub const masked = @import("masked.zig");
 pub const parallel = @import("parallel.zig");
 pub const reduction = @import("reduction.zig");
+pub const flush = @import("flush.zig");
 
 test "all" {
     std.testing.refAllDecls(@This());

@@ -59,6 +59,7 @@ fn parallel_loop_reduction_plus() bool {
 
 test "parallel_loop_reduction_plus" {
     var num_failed: u32 = 0;
+    omp.set_num_threads(3);
     for (0..params.repetitions) |_| {
         if (!parallel_loop_reduction_plus()) {
             num_failed += 1;

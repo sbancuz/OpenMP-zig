@@ -54,7 +54,7 @@ pub const ident_t = extern struct {
     // flags from above
     flags: c_int = 0,
     reserved_2: c_int = 0,
-    reserved_3: c_int = 0x1a, // In some fini it's 0x1b
+    reserved_3: c_int = 35,
     psource: [*:0]const u8,
 };
 
@@ -235,6 +235,10 @@ pub inline fn critical_end(comptime loc: *const ident_t, global_tid: c_int, crit
     __kmpc_end_critical(loc, global_tid, crit);
 }
 
+extern "C" fn __kmpc_flush(loc: *const ident_t) void;
+pub inline fn flush(comptime name: *const ident_t) void {
+    __kmpc_flush(name);
+}
 // Todo: invert for big endian
 const kmp_tasking_flags = packed struct {
     tiedness: u1 = 0, // task is either tied (1) or untied (0) */
