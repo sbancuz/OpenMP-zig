@@ -364,14 +364,13 @@ pub inline fn loop(
             const id_fini = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
                 .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
-                .reserved_3 = 0x1b,
+                .reserved_3 = 0x1c,
             };
             kmp.for_static_fini(&id_fini, global_ctx.global_tid);
 
-            // TODO: Figure out a way to remove this when not needed, somehow there is a race condition even though it compiles to the same code as the llvm implementation
-            // if (!opts.nowait) {
-            barrier();
-            // }
+            if (!opts.nowait) {
+                barrier();
+            }
         }
 
         pub inline fn dynamic_impl(
