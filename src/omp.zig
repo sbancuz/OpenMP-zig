@@ -285,7 +285,7 @@ inline fn reduce(
             const end_id = comptime .{
                 .flags = id.*.flags,
                 .psource = id.*.psource,
-                .reserved_3 = 0x1b,
+                .reserved_3 = 0x1c,
             };
             kmp.end_reduce_nowait(&end_id, global_ctx.global_tid, lck);
         },
