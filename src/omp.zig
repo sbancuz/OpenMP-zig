@@ -64,8 +64,8 @@ inline fn in_workshare(
             args: anytype,
             post: anytype,
         ) in.copy_ret(f) {
-            const private_copy = in.deep_copy(args.private);
-            const reduction_copy = in.deep_copy(args.reduction);
+            const private_copy = in.shallow_copy(args.private);
+            const reduction_copy = in.shallow_copy(args.reduction);
             const true_args = if (!is_omp_func) pre ++ .{args.shared ++ private_copy ++ reduction_copy} ++ post else pre ++ args.shared ++ private_copy ++ reduction_copy ++ post;
 
             const ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)

@@ -137,7 +137,7 @@ pub fn deep_size_of(comptime T: type) usize {
 /// but it won't go more than one level deep
 ///
 /// WARNING: This function may be not memory safe if it doesn't get inlined
-pub inline fn deep_copy(original: anytype) @TypeOf(original) {
+pub inline fn shallow_copy(original: anytype) @TypeOf(original) {
     var copy: @TypeOf(original) = .{} ++ original;
     inline for (original, &copy) |og, *v| {
         if (@typeInfo(@TypeOf(og)) == .Pointer) {
