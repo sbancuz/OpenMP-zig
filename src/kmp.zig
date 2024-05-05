@@ -60,20 +60,20 @@ pub const ident_t = extern struct {
 
 pub const kmpc_micro_t = fn (global_tid: *c_int, bound_tid: *c_int, args: *align(@alignOf(usize)) anyopaque) callconv(.C) void;
 
-extern "C" fn __kmpc_fork_call(name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, ...) void;
+extern "omp" fn __kmpc_fork_call(name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, ...) void;
 pub inline fn fork_call(comptime name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, args: anytype) void {
     __kmpc_fork_call(name, argc, fun, args);
 }
 // it's not really variadic, so make sure to pass only one argument
-extern "C" fn __kmpc_fork_call_if(name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, cond: c_int, ...) void;
+extern "omp" fn __kmpc_fork_call_if(name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, cond: c_int, ...) void;
 pub inline fn fork_call_if(comptime name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, cond: c_int, args: anytype) void {
     __kmpc_fork_call_if(name, argc, fun, cond, args);
 }
 
-extern "C" fn __kmpc_for_static_init_4(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_int, pupper: *c_int, pstride: *c_int, incr: c_int, chunk: c_int) void;
-extern "C" fn __kmpc_for_static_init_4u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_uint, pupper: *c_uint, pstride: *c_int, incr: c_int, chunk: c_int) void;
-extern "C" fn __kmpc_for_static_init_8(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_long, pupper: *c_long, pstride: *c_long, incr: c_long, chunk: c_long) void;
-extern "C" fn __kmpc_for_static_init_8u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_ulong, pupper: *c_ulong, pstride: *c_long, incr: c_long, chunk: c_long) void;
+extern "omp" fn __kmpc_for_static_init_4(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_int, pupper: *c_int, pstride: *c_int, incr: c_int, chunk: c_int) void;
+extern "omp" fn __kmpc_for_static_init_4u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_uint, pupper: *c_uint, pstride: *c_int, incr: c_int, chunk: c_int) void;
+extern "omp" fn __kmpc_for_static_init_8(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_long, pupper: *c_long, pstride: *c_long, incr: c_long, chunk: c_long) void;
+extern "omp" fn __kmpc_for_static_init_8u(loc: *const ident_t, gtid: c_int, schedtype: c_int, plastiter: *c_int, plower: *c_ulong, pupper: *c_ulong, pstride: *c_long, incr: c_long, chunk: c_long) void;
 pub inline fn for_static_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedtype: sched_t, plastiter: *c_int, plower: *T, pupper: *T, pstride: *T, incr: T, chunk: T) void {
     if (@typeInfo(T).Int.signedness == .signed)
         if (@typeInfo(T).Int.bits <= 32) {
@@ -96,15 +96,15 @@ pub inline fn for_static_init(comptime T: type, comptime loc: *const ident_t, gt
     }
 }
 
-extern "C" fn __kmpc_for_static_fini(loc: *const ident_t, global_tid: c_int) void;
+extern "omp" fn __kmpc_for_static_fini(loc: *const ident_t, global_tid: c_int) void;
 pub inline fn for_static_fini(comptime name: *const ident_t, global_tid: c_int) void {
     __kmpc_for_static_fini(name, global_tid);
 }
 
-extern "C" fn __kmpc_dispatch_init_4(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_int, ub: c_int, st: c_int, chunk: c_int) void;
-extern "C" fn __kmpc_dispatch_init_4u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_uint, ub: c_uint, st: c_int, chunk: c_int) void;
-extern "C" fn __kmpc_dispatch_init_8(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_long, ub: c_long, st: c_long, chunk: c_long) void;
-extern "C" fn __kmpc_dispatch_init_8u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_ulong, ub: c_ulong, st: c_long, chunk: c_long) void;
+extern "omp" fn __kmpc_dispatch_init_4(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_int, ub: c_int, st: c_int, chunk: c_int) void;
+extern "omp" fn __kmpc_dispatch_init_4u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_uint, ub: c_uint, st: c_int, chunk: c_int) void;
+extern "omp" fn __kmpc_dispatch_init_8(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_long, ub: c_long, st: c_long, chunk: c_long) void;
+extern "omp" fn __kmpc_dispatch_init_8u(loc: *const ident_t, gtid: c_int, schedule: c_int, lb: c_ulong, ub: c_ulong, st: c_long, chunk: c_long) void;
 pub inline fn dispatch_init(comptime T: type, comptime loc: *const ident_t, gtid: c_int, schedule: sched_t, lb: T, ub: T, st: T, chunk: T) void {
     if (@typeInfo(T).Int.signedness == .signed) {
         if (@typeInfo(T).Int.bits <= 32) {
@@ -127,10 +127,10 @@ pub inline fn dispatch_init(comptime T: type, comptime loc: *const ident_t, gtid
     }
 }
 
-extern "C" fn __kmpc_dispatch_next_4(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_int, p_ub: *c_int, p_st: *c_int) c_int;
-extern "C" fn __kmpc_dispatch_next_4u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_uint, p_ub: *c_uint, p_st: *c_int) c_int;
-extern "C" fn __kmpc_dispatch_next_8(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_long, p_ub: *c_long, p_st: *c_long) c_int;
-extern "C" fn __kmpc_dispatch_next_8u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_ulong, p_ub: *c_ulong, p_st: *c_long) c_int;
+extern "omp" fn __kmpc_dispatch_next_4(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_int, p_ub: *c_int, p_st: *c_int) c_int;
+extern "omp" fn __kmpc_dispatch_next_4u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_uint, p_ub: *c_uint, p_st: *c_int) c_int;
+extern "omp" fn __kmpc_dispatch_next_8(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_long, p_ub: *c_long, p_st: *c_long) c_int;
+extern "omp" fn __kmpc_dispatch_next_8u(loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *c_ulong, p_ub: *c_ulong, p_st: *c_long) c_int;
 pub inline fn dispatch_next(comptime T: type, comptime loc: *const ident_t, gtid: c_int, p_last: *c_int, p_lb: *T, p_ub: *T, p_st: *T) c_int {
     if (std.meta.trait.issingedInt(T)) {
         if (@typeInfo(T).Int.bits <= 32) {
@@ -153,10 +153,10 @@ pub inline fn dispatch_next(comptime T: type, comptime loc: *const ident_t, gtid
     }
 }
 
-extern "C" fn __kmpc_dispatch_fini_4(loc: *const ident_t, gtid: c_int) void;
-extern "C" fn __kmpc_dispatch_fini_4u(loc: *const ident_t, gtid: c_int) void;
-extern "C" fn __kmpc_dispatch_fini_8(loc: *const ident_t, gtid: c_int) void;
-extern "C" fn __kmpc_dispatch_fini_8u(loc: *const ident_t, gtid: c_int) void;
+extern "omp" fn __kmpc_dispatch_fini_4(loc: *const ident_t, gtid: c_int) void;
+extern "omp" fn __kmpc_dispatch_fini_4u(loc: *const ident_t, gtid: c_int) void;
+extern "omp" fn __kmpc_dispatch_fini_8(loc: *const ident_t, gtid: c_int) void;
+extern "omp" fn __kmpc_dispatch_fini_8u(loc: *const ident_t, gtid: c_int) void;
 pub inline fn dispatch_fini(comptime T: type, comptime loc: *const ident_t, gtid: c_int) void {
     if (@typeInfo(T).Int.signedness == .signed) {
         if (@typeInfo(T).Int.bits <= 32) {
@@ -179,63 +179,63 @@ pub inline fn dispatch_fini(comptime T: type, comptime loc: *const ident_t, gtid
     }
 }
 
-extern "C" fn __kmpc_ordered(loc: *const ident_t, global_tid: c_int) void;
+extern "omp" fn __kmpc_ordered(loc: *const ident_t, global_tid: c_int) void;
 pub inline fn ordered(comptime name: *const ident_t, global_tid: c_int) void {
     __kmpc_ordered(name, global_tid);
 }
 
-extern "C" fn __kmpc_end_ordered(loc: *const ident_t, global_tid: c_int) void;
+extern "omp" fn __kmpc_end_ordered(loc: *const ident_t, global_tid: c_int) void;
 pub inline fn end_ordered(comptime name: *const ident_t, global_tid: c_int) void {
     __kmpc_end_ordered(name, global_tid);
 }
 
-extern "C" fn __kmpc_masked(loc: *const ident_t, global_tid: c_int, filter: c_int) c_int;
+extern "omp" fn __kmpc_masked(loc: *const ident_t, global_tid: c_int, filter: c_int) c_int;
 pub inline fn masked(comptime name: *const ident_t, global_tid: c_int, filter: c_int) c_int {
     return __kmpc_masked(name, global_tid, filter);
 }
 
-extern "C" fn __kmpc_end_masked(loc: *const ident_t, global_tid: c_int) void;
+extern "omp" fn __kmpc_end_masked(loc: *const ident_t, global_tid: c_int) void;
 pub inline fn end_masked(comptime name: *const ident_t, global_tid: c_int) void {
     __kmpc_end_masked(name, global_tid);
 }
 
-extern "C" fn __kmpc_single(loc: *const ident_t, global_tid: c_int) c_int;
+extern "omp" fn __kmpc_single(loc: *const ident_t, global_tid: c_int) c_int;
 pub inline fn single(comptime name: *const ident_t, global_tid: c_int) c_int {
     return __kmpc_single(name, global_tid);
 }
 
-extern "C" fn __kmpc_end_single(loc: *const ident_t, global_tid: c_int) void;
+extern "omp" fn __kmpc_end_single(loc: *const ident_t, global_tid: c_int) void;
 pub inline fn end_single(comptime name: *const ident_t, global_tid: c_int) void {
     __kmpc_end_single(name, global_tid);
 }
 
-extern "C" fn __kmpc_barrier(loc: *const ident_t, global_tid: c_int) void;
+extern "omp" fn __kmpc_barrier(loc: *const ident_t, global_tid: c_int) void;
 pub inline fn barrier(comptime name: *const ident_t, global_tid: c_int) void {
     __kmpc_barrier(name, global_tid);
 }
 
-extern "C" fn __kmpc_global_thread_num() c_int;
+extern "omp" fn __kmpc_global_thread_num() c_int;
 pub inline fn get_tid() c_int {
     return __kmpc_global_thread_num();
 }
 
-extern "C" fn __kmpc_push_num_threads(loc: *const ident_t, global_tid: c_int, num_threads: c_int) void;
+extern "omp" fn __kmpc_push_num_threads(loc: *const ident_t, global_tid: c_int, num_threads: c_int) void;
 pub inline fn push_num_threads(comptime name: *const ident_t, global_tid: c_int, num_threads: c_int) void {
     __kmpc_push_num_threads(name, global_tid, num_threads);
 }
 
 pub const critical_name_t = [8]c_int; // This seems to be just a lock, so I give up on ever using it
-extern "C" fn __kmpc_critical_with_hint(loc: *const ident_t, global_tid: c_int, crit: *critical_name_t, hint: c_int) void;
+extern "omp" fn __kmpc_critical_with_hint(loc: *const ident_t, global_tid: c_int, crit: *critical_name_t, hint: c_int) void;
 pub inline fn critical(comptime loc: *const ident_t, global_tid: c_int, crit: *critical_name_t, hint: c_int) void {
     __kmpc_critical_with_hint(loc, global_tid, crit, hint);
 }
 
-extern "C" fn __kmpc_end_critical(loc: *const ident_t, global_tid: c_int, crit: *critical_name_t) void;
+extern "omp" fn __kmpc_end_critical(loc: *const ident_t, global_tid: c_int, crit: *critical_name_t) void;
 pub inline fn critical_end(comptime loc: *const ident_t, global_tid: c_int, crit: *critical_name_t) void {
     __kmpc_end_critical(loc, global_tid, crit);
 }
 
-extern "C" fn __kmpc_flush(loc: *const ident_t) void;
+extern "omp" fn __kmpc_flush(loc: *const ident_t) void;
 pub inline fn flush(comptime name: *const ident_t) void {
     __kmpc_flush(name);
 }
@@ -299,48 +299,48 @@ inline fn task_outline(comptime f: anytype, comptime ret_type: type) type {
         }
     };
 }
-extern "C" fn __kmpc_omp_task(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int;
+extern "omp" fn __kmpc_omp_task(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int;
 pub inline fn task(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int {
     return __kmpc_omp_task(name, gtid, new_task);
 }
 
 // Same trick as before, this is not really variadic
-extern "C" fn __kmpc_omp_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, ...) *kmp_task_t;
+extern "omp" fn __kmpc_omp_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, ...) *kmp_task_t;
 pub inline fn task_alloc(comptime name: *const ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: anytype) *kmp_task_t {
     return __kmpc_omp_task_alloc(name, gtid, @bitCast(flags), sizeof_kmp_task_t, sizeof_shareds, task_entry);
 }
 
-extern "C" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_part: c_int) c_int;
+extern "omp" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_part: c_int) c_int;
 pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int) c_int {
     // Not really sure what end_part is, so always set it to 0. Even whithin the runtime it's used only in logging
     return __kmpc_omp_taskyield(name, gtid, 0);
 }
-// extern "C" fn __kmpc_omp_target_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t;
+// extern "omp" fn __kmpc_omp_target_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t;
 // pub inline fn target_task_alloc(comptime name: *const ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t {
 //     return __kmpc_omp_target_task_alloc(name, gtid, flags, sizeof_kmp_task_t, sizeof_shareds, task_entry, device_id);
 // }
 //
-// extern "C" fn __kmpc_omp_task_begin_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void;
+// extern "omp" fn __kmpc_omp_task_begin_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void;
 // pub inline fn task_begin_if0(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void {
 //     __kmpc_omp_task_begin_if0(name, gtid, new_task);
 // }
 //
-// extern "C" fn __kmpc_omp_task_complete_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void;
+// extern "omp" fn __kmpc_omp_task_complete_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void;
 // pub inline fn task_complete_if0(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void {
 //     __kmpc_omp_task_complete_if0(name, gtid, new_task);
 // }
 //
-// extern "C" fn __kmpc_omp_task_parts(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int;
+// extern "omp" fn __kmpc_omp_task_parts(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int;
 // pub inline fn task_parts(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int {
 //     return __kmpc_omp_task_parts(name, gtid, new_task, part);
 // }
 //
-// extern "C" fn __kmpc_omp_taskwait(loc_ref: *const ident_t, gtid: c_int) c_int;
+// extern "omp" fn __kmpc_omp_taskwait(loc_ref: *const ident_t, gtid: c_int) c_int;
 // pub inline fn taskwait(comptime name: *const ident_t, gtid: c_int) c_int {
 //     return __kmpc_omp_taskwait(name, gtid);
 // }
 //
-// extern "C" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_part: c_int) c_int;
+// extern "omp" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_part: c_int) c_int;
 // pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int, end_part: c_int) c_int {
 //     return __kmpc_omp_taskyield(name, gtid, end_part);
 // }
@@ -504,7 +504,7 @@ pub inline fn create_reduce(
     };
 }
 
-extern "C" fn __kmpc_reduce_nowait(
+extern "omp" fn __kmpc_reduce_nowait(
     loc: *const ident_t,
     global_tid: c_int,
     num_vars: c_int,
@@ -528,12 +528,12 @@ pub inline fn reduce_nowait(
     return __kmpc_reduce_nowait(loc, global_tid, num_vars, reduce_size, reduce_data, reduce_t.f, lck);
 }
 
-extern "C" fn __kmpc_end_reduce_nowait(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
+extern "omp" fn __kmpc_end_reduce_nowait(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
 pub inline fn end_reduce_nowait(comptime loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void {
     __kmpc_end_reduce_nowait(loc, global_tid, lck);
 }
 
-extern "C" fn __kmpc_reduce(
+extern "omp" fn __kmpc_reduce(
     loc: *const ident_t,
     global_tid: c_int,
     num_vars: c_int,
@@ -557,11 +557,11 @@ pub inline fn reduce(
     return __kmpc_reduce(loc, global_tid, num_vars, reduce_size, reduce_data, reduce_t.f, lck);
 }
 
-extern "C" fn __kmpc_end_reduce(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
+extern "omp" fn __kmpc_end_reduce(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
 pub inline fn end_reduce(comptime loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void {
     __kmpc_end_reduce(loc, global_tid, lck);
 }
-extern "C" fn __kmpc_push_proc_bind(loc: *const ident_t, global_tid: c_int, proc_bind: c_int) void;
+extern "omp" fn __kmpc_push_proc_bind(loc: *const ident_t, global_tid: c_int, proc_bind: c_int) void;
 pub inline fn push_proc_bind(comptime loc: *const ident_t, global_tid: c_int, proc_bind: omp.proc_bind) void {
     __kmpc_push_proc_bind(loc, global_tid, @intFromEnum(proc_bind));
 }
