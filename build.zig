@@ -28,6 +28,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const unit_tests = b.addTest(.{
+        .name = "unit-tests",
         .root_source_file = b.path("tests/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -37,6 +38,7 @@ pub fn build(b: *std.Build) void {
     unit_tests.linkSystemLibrary("omp");
 
     unit_tests.root_module.addImport("omp", omp);
+    b.installArtifact(unit_tests);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

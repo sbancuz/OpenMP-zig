@@ -64,9 +64,13 @@ inline fn in_workshare(
             args: anytype,
             post: anytype,
         ) in.copy_ret(f) {
-            const private_copy = in.shallow_copy(args.private);
+            const private_copy = in.make_another(args.private);
+            const firstprivate_copy = in.shallow_copy(args.firstprivate);
             const reduction_copy = in.shallow_copy(args.reduction);
-            const true_args = if (!is_omp_func) pre ++ .{args.shared ++ private_copy ++ reduction_copy} ++ post else pre ++ args.shared ++ private_copy ++ reduction_copy ++ post;
+            const true_args = if (!is_omp_func)
+                pre ++ .{args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy} ++ post
+            else
+                pre ++ args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy ++ post;
 
             const ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
                 @call(.always_inline, f, true_args) catch |err| err
@@ -161,10 +165,7 @@ pub inline fn parallel(
             in.check_fn_signature(f);
 
             const ret = make_args(args, f);
-            const id: kmp.ident_t = .{
-                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                .psource = "parallel" ++ @typeName(@TypeOf(f)),
-            };
+            const id: kmp.ident_t = .{ .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC), .psource = "parallel" ++ @typeName(@TypeOf(f)), .reserved_3 = 0x1e };
             make_proc_bind(&id, opts.proc_bind);
             const outline = parallel_outline(f, @TypeOf(ret), opts).workshare_outline;
 
@@ -460,9 +461,9 @@ pub inline fn loop(
 
 pub inline fn barrier() void {
     const id: kmp.ident_t = .{
-        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_BARRIER_EXPL),
         .psource = "barrier",
-        .reserved_3 = 0x1b,
+        .reserved_3 = 0x1e,
     };
     kmp.barrier(&id, global_ctx.global_tid);
 }
@@ -472,7 +473,7 @@ pub inline fn flush(vars: anytype) void {
     const id: kmp.ident_t = .{
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "flush",
-        .reserved_3 = 37,
+        .reserved_3 = 0x1e,
     };
     kmp.flush(&id);
 }

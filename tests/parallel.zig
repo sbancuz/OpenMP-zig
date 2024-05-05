@@ -10,6 +10,7 @@ fn test_omp_parallel_default() !bool {
     omp.parallel(.{})
         .run(.{ .shared = .{&sum}, .private = .{&mysum} }, struct {
         fn f(f_sum: *u32, f_mysum: *u32) void {
+            f_mysum.* = 0;
             omp.loop(.{ .idx = u32 })
                 .run(.{ .shared = .{f_mysum} }, 0, params.loop_count + 1, 1, struct {
                 fn f(i: u32, ff_mysum: *u32) void {
@@ -56,6 +57,7 @@ fn test_omp_parallel_if() !bool {
     omp.parallel(.{ .iff = true })
         .run(.{ .shared = .{&sum}, .private = .{&mysum} }, control == 0, struct {
         fn f(f_sum: *u32, f_mysum: *u32) void {
+            f_mysum.* = 0;
             for (0..params.loop_count + 1) |i| {
                 f_mysum.* += @as(u32, @intCast(i));
             }

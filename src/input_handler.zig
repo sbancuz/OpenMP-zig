@@ -52,6 +52,16 @@ fn normalize_type(comptime T: type) type {
         }
     };
 
+    const firstprivate = val: {
+        const idx = get_field_idx(T, "firstprivate");
+        if (fields.len > idx) {
+            param_count += 1;
+            break :val fields[idx].type;
+        } else {
+            break :val @TypeOf(.{});
+        }
+    };
+
     const reduction = val: {
         const idx = get_field_idx(T, "reduction");
         if (fields.len > idx) {
@@ -63,12 +73,13 @@ fn normalize_type(comptime T: type) type {
     };
 
     if (@typeInfo(T) != .Struct or param_count != @typeInfo(T).Struct.fields.len) {
-        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...} .reduction = {...} }, got " ++ @typeName(T) ++ " instead.");
+        @compileError("Expected struct like .{ .shared = .{...}, .private = .{...}, firstprivate = .{...}, .reduction = {...} }, got " ++ @typeName(T) ++ " instead.");
     }
 
     return struct {
         shared: shared,
         private: private,
+        firstprivate: firstprivate,
         reduction: reduction,
     };
 }
@@ -98,6 +109,13 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
         break :val .{};
     };
 
+    const firstprivate = val: {
+        if (comptime has_field(args_type, "firstprivate")) {
+            break :val args.firstprivate;
+        }
+        break :val .{};
+    };
+
     const reduction = val: {
         if (comptime has_field(args_type, "reduction")) {
             break :val args.reduction;
@@ -105,7 +123,7 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
         break :val .{};
     };
 
-    return .{ .shared = shared, .private = private, .reduction = reduction };
+    return .{ .shared = shared, .private = private, .firstprivate = firstprivate, .reduction = reduction };
 }
 
 pub fn check_fn_signature(comptime f: anytype) void {
@@ -132,7 +150,7 @@ pub fn deep_size_of(comptime T: type) usize {
     return size;
 }
 
-/// Deep copy a struct with pointers
+/// Shallow copy a struct with pointers
 /// This function will copy the struct and all the pointers it contains
 /// but it won't go more than one level deep
 ///
@@ -147,5 +165,20 @@ pub inline fn shallow_copy(original: anytype) @TypeOf(original) {
             v.* = og;
         }
     }
+    return copy;
+}
+
+/// Make another struct with the same fields as the original, but all values are set to undefined
+pub inline fn make_another(original: anytype) @TypeOf(original) {
+    var copy: @TypeOf(original) = .{} ++ original;
+    inline for (original, &copy) |og, *v| {
+        if (@typeInfo(@TypeOf(og)) == .Pointer) {
+            var tmp: @TypeOf(og.*) = undefined;
+            v.* = &tmp;
+        } else {
+            v.* = undefined;
+        }
+    }
+
     return copy;
 }
