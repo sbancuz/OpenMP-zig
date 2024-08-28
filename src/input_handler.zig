@@ -26,7 +26,10 @@ pub fn zigc_ret(comptime f: anytype, comptime args_type: type) type {
 }
 
 pub fn copy_ret(comptime f: anytype) type {
-    return @typeInfo(@TypeOf(f)).Fn.return_type orelse void;
+    const typ = @typeInfo(@TypeOf(f));
+    if (typ == .Fn) return typ.Fn.return_type orelse void;
+    if (typ == .Pointer) return @typeInfo(typ.Pointer.child).Fn.return_type orelse void;
+    @compileError("You need to provide either a function pointer or a function");
 }
 
 fn normalize_type(comptime T: type) type {
@@ -128,9 +131,12 @@ pub fn normalize_args(args: anytype) normalize_type(@TypeOf(args)) {
 
 pub fn check_fn_signature(comptime f: anytype) void {
     const f_type_info = @typeInfo(@TypeOf(f));
-    if (f_type_info != .Fn) {
-        @compileError("Expected function with signature `fn(, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
+    if (f_type_info == .Fn)
+        return;
+    if (@typeInfo(f_type_info.Pointer.child) == .Fn) {
+        return;
     }
+    @compileError("Expected function with signature `fn(, ...)`, got " ++ @typeName(@TypeOf(f)) ++ " instead.");
 }
 
 pub fn check_args(comptime T: type) void {

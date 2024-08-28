@@ -37,6 +37,11 @@ pub const parallel_for_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
     nowait: bool = false,
 };
+
+pub const sections_opts = struct {
+    reduction: []const reduction_operators = &[0]reduction_operators{},
+    nowait: bool = false,
+};
 pub const ctx = struct {
     global_tid: c_int,
     bound_tid: c_int,
@@ -51,6 +56,7 @@ threadlocal var global_ctx: ctx = undefined;
 
 inline fn in_workshare(
     comptime red: []const kmp.reduction_operators,
+    comptime do_copy: bool,
     comptime f: anytype,
 ) type {
     return struct {
@@ -58,19 +64,32 @@ inline fn in_workshare(
             var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
         };
 
-        pub inline fn run(
+        inline fn run(
             comptime is_omp_func: bool,
             pre: anytype,
             args: anytype,
             post: anytype,
         ) in.copy_ret(f) {
-            const private_copy = in.make_another(args.private);
-            const firstprivate_copy = in.shallow_copy(args.firstprivate);
-            const reduction_copy = in.shallow_copy(args.reduction);
-            const true_args = if (!is_omp_func)
-                pre ++ .{args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy} ++ post
-            else
-                pre ++ args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy ++ post;
+            const private_copy = if (do_copy) in.make_another(args.private) else args.private;
+            const firstprivate_copy = if (do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
+            const reduction_copy = if (do_copy) in.shallow_copy(args.reduction) else args.reduction;
+            const true_args = brk: {
+                if (do_copy) {
+                    const r = if (!is_omp_func)
+                        pre ++ .{args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy} ++ post
+                    else
+                        pre ++ args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy ++ post;
+
+                    break :brk r;
+                } else {
+                    const r = if (!is_omp_func)
+                        pre ++ .{.{args}} ++ post
+                    else
+                        pre ++ .{args} ++ post;
+
+                    break :brk r;
+                }
+            };
 
             const ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
                 @call(.always_inline, f, true_args) catch |err| err
@@ -84,7 +103,6 @@ inline fn in_workshare(
                 };
                 reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
             }
-
             return ret;
         }
     };
@@ -129,9 +147,9 @@ pub inline fn parallel(
                     };
 
                     args.ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
-                        in_workshare(in_opts.reduction, f).run(true, .{}, args.v, .{}) catch |err| err
+                        in_workshare(in_opts.reduction, true, f).run(true, .{}, args.v, .{}) catch |err| err
                     else
-                        in_workshare(in_opts.reduction, f).run(true, .{}, args.v, .{});
+                        in_workshare(in_opts.reduction, true, f).run(true, .{}, args.v, .{});
 
                     return;
                 }
@@ -210,6 +228,34 @@ pub inline fn parallel(
             }
             return ret.ret;
         }
+
+        inline fn parallel_sections_impl(
+            args: anytype,
+            comptime f: anytype,
+            comptime fs: anytype,
+            comptime has_cond: bool,
+            cond: bool,
+        ) in.copy_ret(f) {
+            in.check_fn_signature(f);
+
+            const ret_t = struct {
+                ret: in.copy_ret(f) = undefined,
+                v: @TypeOf(.{ args, fs }),
+            };
+            const ret: ret_t = .{ .ret = undefined, .v = .{ args, fs } };
+
+            const id: kmp.ident_t = .{ .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC), .psource = "parallel" ++ @typeName(@TypeOf(f)), .reserved_3 = 0x1e };
+            make_proc_bind(&id, opts.proc_bind);
+            const outline = parallel_outline(f, @TypeOf(ret), opts).generic_outline;
+
+            if (has_cond) {
+                kmp.fork_call_if(&id, 1, @ptrCast(&outline), @intFromBool(cond), &ret);
+            } else {
+                kmp.fork_call(&id, 1, @ptrCast(&outline), &ret);
+            }
+
+            return ret.ret;
+        }
     };
 
     const api = struct {
@@ -256,6 +302,29 @@ pub inline fn parallel(
                 pub const run = if (opts.iff) _run_if else _run;
             };
         }
+
+        pub inline fn sections(
+            comptime sections_args: sections_opts,
+        ) type {
+            return struct {
+                inline fn _run_if(
+                    args: anytype,
+                    cond: bool,
+                    comptime fs: anytype,
+                ) in.copy_ret(fs[0]) {
+                    return common.parallel_sections_impl(args, omp.sections(sections_args).run, fs, true, cond);
+                }
+
+                inline fn _run(
+                    args: anytype,
+                    comptime fs: anytype,
+                ) in.copy_ret(fs[0]) {
+                    return common.parallel_sections_impl(args, omp.sections(sections_args).run, fs, false, false);
+                }
+
+                pub const run = if (opts.iff) _run_if else _run;
+            };
+        }
     };
 
     return struct {
@@ -264,6 +333,9 @@ pub inline fn parallel(
 
         // omp.para(...).loop(...).run(...);
         pub const loop = api.loop;
+
+        // omp.para(...).sections(...).run(...);
+        pub const sections = api.sections;
     };
 }
 
@@ -301,6 +373,13 @@ inline fn reduce(
 pub inline fn loop(
     comptime opts: parallel_for_opts,
 ) type {
+    return _loop(opts, false);
+}
+
+inline fn _loop(
+    comptime opts: parallel_for_opts,
+    comptime is_from_sections: bool,
+) type {
     const common = struct {
         pub fn to_kmp_sched(comptime sched: schedule) kmp.sched_t {
             switch (sched) {
@@ -319,8 +398,9 @@ pub inline fn loop(
             increment: opts.idx,
             comptime f: anytype,
         ) in.copy_ret(f) {
+            const sections_flag = if (is_from_sections) @intFromEnum(kmp.ident_flags.IDENT_WORK_SECTIONS) else 0;
             const id = .{
-                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP),
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_WORK_LOOP) | sections_flag,
                 .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
             };
 
@@ -427,8 +507,9 @@ pub inline fn loop(
             if (f_type_info.Fn.params.len < 1) {
                 @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
             }
+            const do_copy = comptime !is_from_sections;
 
-            in_workshare(opts.reduction, static_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
+            in_workshare(opts.reduction, do_copy, static_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
 
             return undefined;
         }
@@ -440,6 +521,8 @@ pub inline fn loop(
             increment: opts.idx,
             comptime f: anytype,
         ) in.copy_ret(f) {
+            std.debug.assert(is_from_sections == false);
+
             in.check_args(@TypeOf(args));
             in.check_fn_signature(f);
 
@@ -448,7 +531,7 @@ pub inline fn loop(
                 @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
             }
 
-            in_workshare(opts.reduction, dynamic_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
+            in_workshare(opts.reduction, true, dynamic_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
 
             return undefined;
         }
@@ -513,6 +596,54 @@ pub inline fn critical(
             };
 
             return ret;
+        }
+    };
+}
+
+pub inline fn sections(
+    comptime opts: sections_opts,
+) type {
+    return struct {
+        pub inline fn run(
+            args: anytype,
+            comptime fs: anytype,
+        ) in.copy_ret(fs[0]) {
+            const args_type = @TypeOf(args);
+
+            in.check_args(args_type);
+            comptime std.debug.assert(@typeInfo(@TypeOf(fs)) == .Struct);
+            inline for (fs) |f| {
+                in.check_fn_signature(f);
+            }
+
+            const runner = struct {
+                const _fs: [fs.len]@TypeOf(fs[0]) = fs;
+
+                pub inline fn f(idx: usize, a: @TypeOf(in.normalize_args(args))) in.copy_ret(fs[0]) {
+                    const private_copy = in.make_another(a.private);
+                    const firstprivate_copy = in.shallow_copy(a.firstprivate);
+                    const reduction_copy = in.shallow_copy(a.reduction);
+                    const true_args = .{a.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy};
+
+                    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+                    const ret = ret: {
+                        if (type_info == .ErrorUnion) {
+                            break :ret try @call(.auto, _fs[idx], true_args[0]);
+                        } else {
+                            break :ret @call(.auto, _fs[idx], true_args[0]);
+                        }
+                    };
+
+                    return ret;
+                }
+            }.f;
+
+            return _loop(.{
+                .idx = usize,
+                .nowait = opts.nowait,
+                .reduction = opts.reduction,
+                .sched = .static,
+            }, true).run(args, 0, fs.len, 1, runner);
         }
     };
 }

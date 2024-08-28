@@ -16,7 +16,8 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs;
             [
-              zig_0_12
+              zig
+              zls
 
               llvmPackages_18.openmp
               llvmPackages_18.clang

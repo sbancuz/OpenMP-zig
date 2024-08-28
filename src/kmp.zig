@@ -14,12 +14,12 @@ pub const ident_flags = enum(c_int) {
     // /*! To mark a 'barrier' directive in user code */
     IDENT_BARRIER_EXPL = 0x20,
     // /*! To Mark implicit barriers. */
-    IDENT_BARRIER_IMPL = 0x0040,
-    // IDENT_BARRIER_IMPL_MASK = 0x01C0,
     // IDENT_BARRIER_IMPL_FOR = 0x0040,
+    IDENT_BARRIER_IMPL = 0x0040,
     IDENT_BARRIER_IMPL_SECTIONS = 0x00C0,
 
     IDENT_BARRIER_IMPL_SINGLE = 0x0140,
+    // IDENT_BARRIER_IMPL_MASK = 0x01C0,
     IDENT_BARRIER_IMPL_WORKSHARE = 0x01C0,
 
     // /*! To mark a static loop in OMPT callbacks */
