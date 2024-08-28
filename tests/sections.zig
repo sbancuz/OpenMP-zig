@@ -25,7 +25,7 @@ fn test_omp_sections_default() !bool {
                         while (ff_i.* < 400) : (ff_i.* += 1) {
                             ff_mysum.* += ff_i.*;
                         }
-                        omp.critical(.{ .name = "c1" }).run(.{ ff_sum, ff_mysum }, summer);
+                        omp.critical(.{}).run(.{ ff_sum, ff_mysum }, summer);
                     }
                 }.section,
                 &struct {
@@ -34,7 +34,7 @@ fn test_omp_sections_default() !bool {
                         while (ff_i.* < 700) : (ff_i.* += 1) {
                             ff_mysum.* += ff_i.*;
                         }
-                        omp.critical(.{ .name = "c2" }).run(.{ ff_sum, ff_mysum }, summer);
+                        omp.critical(.{}).run(.{ ff_sum, ff_mysum }, summer);
                     }
                 }.section,
                 &struct {
@@ -43,7 +43,7 @@ fn test_omp_sections_default() !bool {
                         while (ff_i.* < 1000) : (ff_i.* += 1) {
                             ff_mysum.* += ff_i.*;
                         }
-                        omp.critical(.{ .name = "c3" }).run(.{ ff_sum, ff_mysum }, summer);
+                        omp.critical(.{}).run(.{ ff_sum, ff_mysum }, summer);
                     }
                 }.section,
             });
@@ -90,7 +90,7 @@ fn test_omp_parallel_sections_default() !bool {
                 while (ff_i.* < 400) : (ff_i.* += 1) {
                     ff_mysum.* += ff_i.*;
                 }
-                omp.critical(.{ .name = "c1" }).run(.{ ff_sum, ff_mysum }, summer);
+                omp.critical(.{}).run(.{ ff_sum, ff_mysum }, summer);
             }
         }.section,
         &struct {
@@ -99,7 +99,7 @@ fn test_omp_parallel_sections_default() !bool {
                 while (ff_i.* < 700) : (ff_i.* += 1) {
                     ff_mysum.* += ff_i.*;
                 }
-                omp.critical(.{ .name = "c2" }).run(.{ ff_sum, ff_mysum }, summer);
+                omp.critical(.{}).run(.{ ff_sum, ff_mysum }, summer);
             }
         }.section,
         &struct {
@@ -108,7 +108,7 @@ fn test_omp_parallel_sections_default() !bool {
                 while (ff_i.* < 1000) : (ff_i.* += 1) {
                     ff_mysum.* += ff_i.*;
                 }
-                omp.critical(.{ .name = "c3" }).run(.{ ff_sum, ff_mysum }, summer);
+                omp.critical(.{}).run(.{ ff_sum, ff_mysum }, summer);
             }
         }.section,
     });
