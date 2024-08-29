@@ -29,6 +29,8 @@ pub const parallel_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
 };
 
+pub const task_opts = struct {};
+
 pub const parallel_for_opts = struct {
     idx: type,
     sched: schedule = .static,
@@ -664,20 +666,25 @@ pub inline fn single() type {
             const barrier_id = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC) | @intFromEnum(kmp.ident_flags.IDENT_BARRIER_IMPL_SINGLE),
                 .psource = "single" ++ @typeName(@TypeOf(f)),
+                .reserved_3 = 0x27,
             };
 
-            const res = undefined;
-            if (kmp.single(&single_id, global_ctx.global_tid) == 1) {
-                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            const res = brk: {
+                if (kmp.single(&single_id, global_ctx.global_tid) == 1) {
+                    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
-                if (type_info == .ErrorUnion) {
-                    res = try @call(.always_inline, f, args);
-                } else {
-                    res = @call(.always_inline, f, args);
+                    const r = if (type_info == .ErrorUnion)
+                        try @call(.always_inline, f, args)
+                    else
+                        @call(.always_inline, f, args);
+
+                    kmp.end_single(&single_id, global_ctx.global_tid);
+
+                    break :brk r;
                 }
 
-                kmp.end_single(&single_id, global_ctx.global_tid);
-            }
+                break :brk undefined;
+            };
             kmp.barrier(&barrier_id, global_ctx.global_tid);
 
             return res;
@@ -725,29 +732,48 @@ pub inline fn masked() type {
 }
 
 pub inline fn task(
-    args: anytype,
-    comptime f: anytype,
-) in.copy_ret(f) {
-    const id = .{
-        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-        .psource = "task" ++ @typeName(@TypeOf(f)),
+    comptime opts: task_opts,
+) type {
+    _ = opts;
+    return struct {
+        pub inline fn run(
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            const id = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                .psource = "task" ++ @typeName(@TypeOf(f)),
+            };
+            const norm = in.normalize_args(args);
+
+            const private_copy = in.make_another(norm.private);
+            const firstprivate_copy = in.shallow_copy(norm.firstprivate);
+            const true_args = norm.shared ++ private_copy ++ firstprivate_copy;
+
+            in.check_args(@TypeOf(true_args));
+            in.check_fn_signature(f);
+
+            const ret_type = struct {
+                ret: in.copy_ret(f) = undefined,
+                args: @TypeOf(true_args),
+            };
+            const ret: ret_type = .{ .ret = undefined, .args = true_args };
+            const outline = kmp.task_outline(f, ret_type);
+
+            var t = kmp.task_alloc(
+                &id,
+                global_ctx.global_tid,
+                .{ .tiedness = 1 },
+                outline.base_function_size + @sizeOf(ret_type),
+                @sizeOf(@TypeOf(&ret)),
+                outline.task,
+            );
+            t.shareds = @constCast(@ptrCast(&ret));
+            _ = kmp.task(&id, global_ctx.global_tid, t);
+
+            return ret.ret;
+        }
     };
-
-    in.check_args(@TypeOf(args));
-    in.check_fn_signature(f);
-
-    const ret_type = struct {
-        ret: in.copy_ret(f) = undefined,
-        args: @TypeOf(args),
-    };
-    const ret: ret_type = .{ .ret = undefined, .args = args };
-    const outline = kmp.task_outline(f, ret_type);
-
-    var t = kmp.task_alloc(&id, global_ctx.global_tid, .{ .tiedness = 1 }, outline.size_in_release_debug, 0, outline.task);
-    t.shared = @constCast(@ptrCast(&ret));
-    _ = kmp.task(&id, global_ctx.global_tid, t);
-
-    return ret.ret;
 }
 
 pub inline fn taskyeild() void {
@@ -756,6 +782,14 @@ pub inline fn taskyeild() void {
         .psource = "taskyeild",
     };
     kmp.taskyield(&id, global_ctx.global_tid);
+}
+
+pub inline fn taskwait() void {
+    const id = .{
+        .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+        .psource = "taskwait",
+    };
+    kmp.taskwait(&id, global_ctx.global_tid);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////

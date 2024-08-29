@@ -268,33 +268,30 @@ const kmp_tasking_flags = packed struct {
     onced: u1 = 0, // 1==ran once already, 0==never ran, record & replay purposes */
     reserved31: u6 = 0, // reserved for library use */
 };
-const kmp_routine_entry_t = *const fn (c_int, *anyopaque) callconv(.C) c_int;
+const kmp_routine_entry_t = *const fn (c_int, *kmp_task_t) callconv(.C) c_int;
 pub const kmp_task_t = extern struct {
     shareds: *anyopaque,
     routine: kmp_routine_entry_t,
     part_id: c_int,
-    data1: kmp_routine_entry_t,
-    data2: kmp_routine_entry_t,
+    // data1: kmp_routine_entry_t,
+    // data2: kmp_routine_entry_t,
 };
 
-inline fn task_outline(comptime f: anytype, comptime ret_type: type) type {
+pub inline fn task_outline(comptime f: anytype, comptime ret_type: type) type {
     return opaque {
-        /// This comes from decompiling the outline with ghidra
-        /// It should never really change since it's just a wrapper around the actual function
-        /// and it can't inline anything even if it wanted to
-        ///
-        /// remember to update the size_in_release_debug if the function changes, can't really enforce it though
-        const size_in_release_debug = 42;
-        noinline fn task(gtid: c_int, pass: *ret_type) callconv(.C) c_int {
-            _ = gtid;
+        pub const base_function_size = 40;
 
-            // TODO: CHECK WITH GHIDRA THE NEW SIZE
+        pub fn task(gtid: c_int, t: *kmp_task_t) callconv(.C) c_int {
+            _ = gtid;
+            const pass: *ret_type = @alignCast(@ptrCast(t.shareds));
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+
             if (type_info == .ErrorUnion) {
-                pass.ret = try @call(.never_inline, f, pass.args);
+                pass.ret = try @call(.always_inline, f, pass.args);
             } else {
-                pass.ret = @call(.never_inline, f, pass.args);
+                pass.ret = @call(.always_inline, f, pass.args);
             }
+
             return 0;
         }
     };
@@ -314,6 +311,11 @@ extern "omp" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_p
 pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int) c_int {
     // Not really sure what end_part is, so always set it to 0. Even whithin the runtime it's used only in logging
     return __kmpc_omp_taskyield(name, gtid, 0);
+}
+
+extern "omp" fn __kmpc_omp_taskwait(loc_ref: *const ident_t, gtid: c_int) c_int;
+pub inline fn taskwait(comptime name: *const ident_t, gtid: c_int) c_int {
+    return __kmpc_omp_taskwait(name, gtid);
 }
 // extern "omp" fn __kmpc_omp_target_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t;
 // pub inline fn target_task_alloc(comptime name: *const ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: kmp_routine_entry_t, device_id: i64) *kmp_task_t {
@@ -335,15 +337,6 @@ pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int) c_int {
 //     return __kmpc_omp_task_parts(name, gtid, new_task, part);
 // }
 //
-// extern "omp" fn __kmpc_omp_taskwait(loc_ref: *const ident_t, gtid: c_int) c_int;
-// pub inline fn taskwait(comptime name: *const ident_t, gtid: c_int) c_int {
-//     return __kmpc_omp_taskwait(name, gtid);
-// }
-//
-// extern "omp" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_part: c_int) c_int;
-// pub inline fn taskyield(comptime name: *const ident_t, gtid: c_int, end_part: c_int) c_int {
-//     return __kmpc_omp_taskyield(name, gtid, end_part);
-// }
 
 pub const reduction_operators = enum(c_int) {
     plus = 0,
