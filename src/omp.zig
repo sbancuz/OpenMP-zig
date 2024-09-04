@@ -29,7 +29,9 @@ pub const parallel_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
 };
 
-pub const task_opts = struct {};
+pub const task_opts = struct {
+    iff: bool = false,
+};
 
 pub const parallel_for_opts = struct {
     idx: type,
@@ -734,45 +736,95 @@ pub inline fn masked() type {
 pub inline fn task(
     comptime opts: task_opts,
 ) type {
-    _ = opts;
-    return struct {
-        pub inline fn run(
+    const api = struct {
+        inline fn run_impl(
             args: anytype,
             comptime f: anytype,
+            cond: bool,
+            fin: bool,
         ) in.copy_ret(f) {
             const id = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "task" ++ @typeName(@TypeOf(f)),
             };
-            const norm = in.normalize_args(args);
+            var norm = in.normalize_args(args);
 
             const private_copy = in.make_another(norm.private);
             const firstprivate_copy = in.shallow_copy(norm.firstprivate);
-            const true_args = norm.shared ++ private_copy ++ firstprivate_copy;
+            const private_args = private_copy ++ firstprivate_copy;
 
-            in.check_args(@TypeOf(true_args));
+            // in.check_args(@TypeOf(private_args));
             in.check_fn_signature(f);
 
-            const ret_type = struct {
-                ret: in.copy_ret(f) = undefined,
-                args: @TypeOf(true_args),
-            };
-            const ret: ret_type = .{ .ret = undefined, .args = true_args };
-            const outline = kmp.task_outline(f, ret_type);
-
-            var t = kmp.task_alloc(
+            const t_type = kmp.task_t(@TypeOf(norm.shared), @TypeOf(private_args));
+            var real_task = t_type.alloc(
+                f,
                 &id,
                 global_ctx.global_tid,
-                .{ .tiedness = 1 },
-                outline.base_function_size + @sizeOf(ret_type),
-                @sizeOf(@TypeOf(&ret)),
-                outline.task,
+                .{ .tiedness = 1, .final = @intFromBool(fin) },
             );
-            t.shareds = @constCast(@ptrCast(&ret));
-            _ = kmp.task(&id, global_ctx.global_tid, t);
 
-            return ret.ret;
+            real_task.shareds = &norm.shared;
+            real_task.privates = private_args;
+
+            if (comptime opts.iff) {
+                if (!cond) {
+                    real_task.begin_if0(&id, global_ctx.global_tid);
+
+                    if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                        _ = @call(.always_inline, f, norm.shared ++ private_args) catch |err| err;
+                    } else {
+                        _ = @call(.always_inline, f, norm.shared ++ private_args);
+                    }
+
+                    real_task.complete_if0(&id, global_ctx.global_tid);
+
+                    // TODO: return some sort of promise
+                    return undefined;
+                }
+            }
+
+            _ = real_task.task(&id, global_ctx.global_tid);
+
+            // TODO: return some sort of promise
+            return undefined;
         }
+
+        pub inline fn run(
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            return run_impl(args, f, false, false);
+        }
+
+        pub inline fn run_if(
+            cond: bool,
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            return run_impl(args, f, cond, false);
+        }
+
+        pub inline fn run_if_final(
+            cond: bool,
+            final: bool,
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            return run_impl(args, f, cond, final);
+        }
+        pub inline fn run_final(
+            final: bool,
+            args: anytype,
+            comptime f: anytype,
+        ) in.copy_ret(f) {
+            return run_impl(args, f, false, final);
+        }
+    };
+
+    return struct {
+        pub const run = if (opts.iff) api.run_if else api.run;
+        pub const run_final = if (opts.iff) api.run_if_final else api.run_final;
     };
 }
 

@@ -268,43 +268,81 @@ const kmp_tasking_flags = packed struct {
     onced: u1 = 0, // 1==ran once already, 0==never ran, record & replay purposes */
     reserved31: u6 = 0, // reserved for library use */
 };
-const kmp_routine_entry_t = *const fn (c_int, *kmp_task_t) callconv(.C) c_int;
-pub const kmp_task_t = extern struct {
-    shareds: *anyopaque,
-    routine: kmp_routine_entry_t,
-    part_id: c_int,
-    // data1: kmp_routine_entry_t,
-    // data2: kmp_routine_entry_t,
-};
 
-pub inline fn task_outline(comptime f: anytype, comptime ret_type: type) type {
-    return opaque {
-        pub const base_function_size = 40;
+// This is just the default task struct, since this is polymorphic, just providing the prototype is enough
+const kmp_task_t = task_t(void, void);
 
-        pub fn task(gtid: c_int, t: *kmp_task_t) callconv(.C) c_int {
-            _ = gtid;
-            const pass: *ret_type = @alignCast(@ptrCast(t.shareds));
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-
-            if (type_info == .ErrorUnion) {
-                pass.ret = try @call(.always_inline, f, pass.args);
-            } else {
-                pass.ret = @call(.always_inline, f, pass.args);
-            }
-
-            return 0;
-        }
-    };
-}
-extern "omp" fn __kmpc_omp_task(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int;
-pub inline fn task(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) c_int {
-    return __kmpc_omp_task(name, gtid, new_task);
-}
+// TODO: Use kmp_task_t and then just cast the types back and forth
+extern "omp" fn __kmpc_omp_task(loc_ref: *const ident_t, gtid: c_int, new_task: *anyopaque) c_int;
+extern "omp" fn __kmpc_omp_task_begin_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *anyopaque) void;
+extern "omp" fn __kmpc_omp_task_complete_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *anyopaque) void;
 
 // Same trick as before, this is not really variadic
 extern "omp" fn __kmpc_omp_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, ...) *kmp_task_t;
-pub inline fn task_alloc(comptime name: *const ident_t, gtid: c_int, flags: kmp_tasking_flags, sizeof_kmp_task_t: usize, sizeof_shareds: usize, task_entry: anytype) *kmp_task_t {
-    return __kmpc_omp_task_alloc(name, gtid, @bitCast(flags), sizeof_kmp_task_t, sizeof_shareds, task_entry);
+
+/// This represents the type `kmp_task_t' or `TaskDescriptorTy' in the source code.
+/// It's a polymorphic type that just need `shareds' and `routine' as the preamble to work
+/// and then the alloc() will allocate enough space for all the variables that are not explicitally specified
+/// in the LLVM source code, like for example the privates here, or part_id
+pub inline fn task_t(comptime shareds: type, comptime pri: type) type {
+    return struct {
+        const kmp_routine_entry_t = *const fn (c_int, *@This()) callconv(.C) c_int;
+
+        shareds: *shareds,
+        routine: kmp_routine_entry_t,
+        privates: pri,
+
+        inline fn outline(self: type, comptime f: anytype, comptime ret_type: type) type {
+            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+
+            return opaque {
+                pub fn task(gtid: c_int, t: *task_t(void, void)) callconv(.C) c_int {
+                    const real: *self = @ptrCast(t);
+                    _ = gtid;
+                    _ = ret_type;
+
+                    const _shareds = real.shareds.*;
+                    const _privates = real.privates;
+
+                    if (type_info == .ErrorUnion) {
+                        _ = try @call(.always_inline, f, _shareds ++ _privates);
+                    } else {
+                        _ = @call(.always_inline, f, _shareds ++ _privates);
+                    }
+
+                    return 0;
+                }
+            };
+        }
+
+        pub inline fn alloc(
+            comptime f: anytype,
+            comptime name: *const ident_t,
+            gtid: c_int,
+            flags: kmp_tasking_flags,
+        ) *@This() {
+            return @ptrCast(__kmpc_omp_task_alloc(
+                name,
+                gtid,
+                @bitCast(flags),
+                @sizeOf(@TypeOf(@This())),
+                @sizeOf(@TypeOf(shareds)),
+                @This().outline(@This(), f, void).task,
+            ));
+        }
+
+        pub inline fn task(self: *@This(), comptime name: *const ident_t, gtid: c_int) c_int {
+            return __kmpc_omp_task(name, gtid, self);
+        }
+
+        pub inline fn begin_if0(self: *@This(), comptime name: *const ident_t, gtid: c_int) void {
+            __kmpc_omp_task_begin_if0(name, gtid, self);
+        }
+
+        pub inline fn complete_if0(self: *@This(), comptime name: *const ident_t, gtid: c_int) void {
+            __kmpc_omp_task_complete_if0(name, gtid, self);
+        }
+    };
 }
 
 extern "omp" fn __kmpc_omp_taskyield(loc_ref: *const ident_t, gtid: c_int, end_part: c_int) c_int;
@@ -322,16 +360,7 @@ pub inline fn taskwait(comptime name: *const ident_t, gtid: c_int) c_int {
 //     return __kmpc_omp_target_task_alloc(name, gtid, flags, sizeof_kmp_task_t, sizeof_shareds, task_entry, device_id);
 // }
 //
-// extern "omp" fn __kmpc_omp_task_begin_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void;
-// pub inline fn task_begin_if0(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void {
-//     __kmpc_omp_task_begin_if0(name, gtid, new_task);
-// }
-//
-// extern "omp" fn __kmpc_omp_task_complete_if0(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void;
-// pub inline fn task_complete_if0(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t) void {
-//     __kmpc_omp_task_complete_if0(name, gtid, new_task);
-// }
-//
+
 // extern "omp" fn __kmpc_omp_task_parts(loc_ref: *const ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int;
 // pub inline fn task_parts(comptime name: *const ident_t, gtid: c_int, new_task: *kmp_task_t, part: *kmp_task_t) c_int {
 //     return __kmpc_omp_task_parts(name, gtid, new_task, part);
