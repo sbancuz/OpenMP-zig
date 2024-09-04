@@ -31,6 +31,7 @@ pub const parallel_opts = struct {
 
 pub const task_opts = struct {
     iff: bool = false,
+    untied: bool = false,
 };
 
 pub const parallel_for_opts = struct {
@@ -761,7 +762,7 @@ pub inline fn task(
                 f,
                 &id,
                 global_ctx.global_tid,
-                .{ .tiedness = 1, .final = @intFromBool(fin) },
+                .{ .tiedness = @intFromBool(!opts.untied), .final = @intFromBool(fin) },
             );
 
             real_task.shareds = &norm.shared;
