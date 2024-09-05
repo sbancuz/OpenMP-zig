@@ -47,15 +47,6 @@ pub fn build(b: *std.Build) !void {
     const openmp_path = try findOpenMP(b);
     const support = try checkSupport(b, openmp_path);
 
-    // const use_openssl = b.option(bool, "openssl", "Use system-installed openssl for TLS support in zap") orelse blk: {
-    //     // Alternatively, use an os env var to determine whether to build openssl support
-    //     if (std.process.getEnvVarOwned(b.allocator, "ZAP_USE_OPENSSL")) |val| {
-    //         defer b.allocator.free(val);
-    //         if (std.mem.eql(u8, val, "true")) break :blk true;
-    //     } else |_| {}
-    //     break :blk false;
-    // };
-
     const lib = b.addStaticLibrary(.{
         .name = "omp-zig",
         .root_source_file = b.path("src/omp.zig"),
