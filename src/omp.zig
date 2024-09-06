@@ -738,7 +738,7 @@ pub inline fn masked() type {
 
 pub const promise = kmp.promise;
 inline fn maybe_promise(comptime T: type) type {
-    return if (T == void) void else promise(T);
+    return if (T == void) void else *promise(T);
 }
 
 pub inline fn task(
@@ -750,7 +750,7 @@ pub inline fn task(
             comptime f: anytype,
             cond: bool,
             fin: bool,
-        ) *promise(in.copy_ret(f)) {
+        ) maybe_promise(in.copy_ret(f)) {
             const id = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "task" ++ @typeName(@TypeOf(f)),
@@ -784,7 +784,7 @@ pub inline fn task(
             real_task.set_data(&norm.shared, private_args);
 
             // TODO: do something better with this error...
-            var pro = if (in.copy_ret(f) == void) undefined else promise(in.copy_ret(f)).init() catch @panic("Buy more RAM lol");
+            var pro: maybe_promise(in.copy_ret(f)) = if (in.copy_ret(f) == void) undefined else promise(in.copy_ret(f)).init() catch @panic("Buy more RAM lol");
             if (@TypeOf(pro) == *kmp.promise(in.copy_ret(f))) {
                 real_task.make_promise(pro);
             }
@@ -815,7 +815,7 @@ pub inline fn task(
         pub inline fn run(
             args: anytype,
             comptime f: anytype,
-        ) *maybe_promise(in.copy_ret(f)) {
+        ) maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, false, false);
         }
 
@@ -823,7 +823,7 @@ pub inline fn task(
             cond: bool,
             args: anytype,
             comptime f: anytype,
-        ) *maybe_promise(in.copy_ret(f)) {
+        ) maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, cond, false);
         }
 
@@ -832,7 +832,7 @@ pub inline fn task(
             final: bool,
             args: anytype,
             comptime f: anytype,
-        ) *maybe_promise(in.copy_ret(f)) {
+        ) maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, cond, final);
         }
 
@@ -840,7 +840,7 @@ pub inline fn task(
             final: bool,
             args: anytype,
             comptime f: anytype,
-        ) *maybe_promise(in.copy_ret(f)) {
+        ) maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, false, final);
         }
     };

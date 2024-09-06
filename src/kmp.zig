@@ -399,7 +399,7 @@ const opaque_cmplrdata_t = extern union {
 
 pub inline fn promise(comptime ret: type) type {
     return struct {
-        const allocator = std.heap.page_allocator;
+        const allocator = std.heap.c_allocator;
 
         result: ret = undefined,
         resolved: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
