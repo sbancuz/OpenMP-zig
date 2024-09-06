@@ -1,5 +1,7 @@
 const std = @import("std");
 const omp = @import("omp.zig");
+const opts = @import("build_options");
+const ompt = @import("ompt.zig");
 
 pub const ident_flags = enum(c_int) {
     // /*! Use trampoline for internal microtasks */
@@ -240,7 +242,7 @@ pub inline fn flush(comptime name: *const ident_t) void {
     __kmpc_flush(name);
 }
 // Todo: invert for big endian
-const kmp_tasking_flags = packed struct {
+pub const tasking_flags = packed struct {
     tiedness: u1 = 0, // task is either tied (1) or untied (0) */
     final: u1 = 0, // task is final(1) so execute immediately */
     merged_if0: u1 = 0, // no __kmpc_task_{begin/complete}_if0 calls in if0               code path */
@@ -269,8 +271,117 @@ const kmp_tasking_flags = packed struct {
     reserved31: u6 = 0, // reserved for library use */
 };
 
+inline fn ifdef(comptime d: bool, t: type) type {
+    return if (d) t else void;
+}
+
+const cache_line_size = 64;
+pub const task_data_t = extern struct {
+    td_task_id: c_int, // id, assigned by debugger
+    td_flags: tasking_flags, // task flags
+    td_team: *anyopaque, // kmp_team_t, // team for this task
+    td_alloc_thread: *anyopaque, //   kmp_info_p *td_alloc_thread; // thread that allocated data structures
+    // Currently not used except for perhaps IDB
+
+    td_parent: *@This(),
+    td_level: c_int,
+    td_untied_count: std.atomic.Value(c_int), // untied task active parts counter
+    td_ident: *ident_t,
+    // Taskwait data.
+
+    td_taskwait_ident: *ident_t,
+    td_taskwait_counter: c_int,
+    td_taskwait_thread: c_int,
+    td_icvs: internal_control align(cache_line_size),
+    td_allocated_child_tasks: std.atomic.Value(c_int) align(cache_line_size),
+    td_incomplete_child_tasks: std.atomic.Value(c_int),
+    //   kmp_taskgroup_t*
+    td_taskgroup: *anyopaque, // Each task keeps pointer to its current taskgroup
+    //   kmp_dephash_t*
+    td_dephash: *anyopaque, // Dependencies for children tasks are tracked from here
+    //   kmp_depnode_t*
+    td_depnode: *anyopaque, // Pointer to graph node if this task has dependencies
+    td_task_team: *anyopaque, // kmp_task_team_t *
+    td_size_alloc: usize, // Size of task structure, including shareds etc.
+    // 4 or 8 byte integers for the loop bounds in GOMP_taskloop
+    td_size_loop_bounds: ifdef(opts.gomp_support, c_int),
+
+    td_last_tied: *@This(), // keep tied task scheduling constraint
+    // GOMP sends in a copy function for copy constructors
+    td_copy_func: ifdef(opts.gomp_support, *const fn (*anyopaque, *anyopaque) callconv(.C) void),
+
+    td_allow_completion_event: *anyopaque, // kmp_event_t
+    ompt_task_info: ifdef(opts.ompt_support, ompt.task_info_t),
+    is_taskgraph: ifdef(opts.ompx_support, c_char), // whether the task is within a TDG
+    tdg: ifdef(opts.ompx_support, *anyopaque), // kmp_tdg_info_t *// used to associate task with a TDG
+    td_target_data: target_data_t,
+};
+
+const event_type_t = enum(c_int) {
+    KMP_EVENT_UNINITIALIZED = 0,
+    KMP_EVENT_ALLOW_COMPLETION = 1,
+};
+
+const envent_t = extern struct {
+    typ: event_type_t,
+    lock: tas_lock,
+    task: task_t(void, void),
+};
+// TODO: SWITCH FOR BIG/LITTLE ENDIAN
+const base_tas_lock_t = extern struct {
+    // KMP_LOCK_FREE(tas) => unlocked; locked: (gtid+1) of owning thread
+    // Flip the ordering of the high and low 32-bit member to be consistent
+    // with the memory layout of the address in 64-bit big-endian.
+    poll: std.atomic.Value(c_int),
+    depth_locked: c_int, // depth locked, for nested locks only
+};
+
+const lock_pool_t = extern struct {
+    next: *tas_lock, // TODO: This technically is a union of locks, but since I don't want to copy every struct this will suffice
+    index: c_int,
+};
+
+const tas_lock = union {
+    lk: base_tas_lock_t,
+    pool: lock_pool_t, // make certain struct is large enough
+    lk_align: c_longdouble, // use worst case alignment; no cache line padding
+};
+
+const internal_control = extern struct {
+    serial_nesting_level: c_char, // /* corresponds to the value of the th_team_serialized field */
+    dynamic: c_char, // /* internal control for dynamic adjustment of threads (per thread) */
+    bt_set: c_char, // internal control for whether blocktime is explicitly set */
+    blocktime: c_int, //* internal control for blocktime */
+    bt_intervals: ifdef(opts.kmp_monitor_support, c_int), //* internal control for blocktime intervals */
+    nproc: c_int, // internal control for #threads for next parallel region (per //                 thread) */
+    thread_limit: c_int, //* internal control for thread-limit-var */
+    task_thread_limit: c_int, //; /* internal control for thread-limit-var of a task*/
+    max_active_levels: c_int, //; /* internal control for max_active_levels */
+    sched: r_sched, //* internal control for runtime schedule {sched,chunk} pair */
+    proc_bind: proc_bind_t, //; /* internal control for affinity  */
+    default_device: c_int, //* internal control for default device */
+    next: *@This(),
+};
+
+const proc_bind_t = enum(c_int) {
+    proc_bind_false = 0,
+    proc_bind_true,
+    proc_bind_primary,
+    proc_bind_close,
+    proc_bind_spread,
+    proc_bind_intel, // use KMP_AFFINITY interface
+    proc_bind_default,
+};
+
+// Technically it's a union but who cares `kmp_r_sched'
+const r_sched = isize;
+
+const target_data_t = extern struct {
+    async_handle: *anyopaque, // libomptarget async handle for task completion query
+};
+
 // This is just the default task struct, since this is polymorphic, just providing the prototype is enough
-const kmp_task_t = task_t(void, void);
+const kmp_task_t = task_t(void, void, void);
 
 // TODO: Use kmp_task_t and then just cast the types back and forth
 extern "omp" fn __kmpc_omp_task(loc_ref: *const ident_t, gtid: c_int, new_task: *anyopaque) c_int;
@@ -280,36 +391,86 @@ extern "omp" fn __kmpc_omp_task_complete_if0(loc_ref: *const ident_t, gtid: c_in
 // Same trick as before, this is not really variadic
 extern "omp" fn __kmpc_omp_task_alloc(loc_ref: *const ident_t, gtid: c_int, flags: c_int, sizeof_kmp_task_t: usize, sizeof_shareds: usize, ...) *kmp_task_t;
 
+const opaque_routine_entry_t = *const fn (c_int, *kmp_task_t) callconv(.C) c_int;
+const opaque_cmplrdata_t = extern union {
+    priority: c_int,
+    destructors: opaque_routine_entry_t,
+};
+
+pub inline fn promise(comptime ret: type) type {
+    return struct {
+        const allocator = std.heap.page_allocator;
+
+        result: ret = undefined,
+        resolved: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        pub inline fn init() !*@This() {
+            return try allocator.create(@This());
+        }
+
+        pub inline fn deinit(self: *@This()) void {
+            allocator.free(std.mem.asBytes(self));
+        }
+
+        pub fn get(self: *@This()) ret {
+            while (self.resolved.cmpxchgStrong(false, true, .seq_cst, .seq_cst)) |val| {
+                if (val) break;
+                std.atomic.spinLoopHint();
+            }
+
+            return self.result;
+        }
+
+        pub inline fn release(self: *@This()) void {
+            self.resolved.store(true, .release);
+        }
+    };
+}
+
 /// This represents the type `kmp_task_t' or `TaskDescriptorTy' in the source code.
 /// It's a polymorphic type that just need `shareds' and `routine' as the preamble to work
 /// and then the alloc() will allocate enough space for all the variables that are not explicitally specified
 /// in the LLVM source code, like for example the privates here, or part_id
-pub inline fn task_t(comptime shareds: type, comptime pri: type) type {
-    return struct {
-        const kmp_routine_entry_t = *const fn (c_int, *@This()) callconv(.C) c_int;
+pub inline fn task_t(comptime shareds: type, comptime pri: type, comptime ret: type) type {
+    // This is needed because extern structs cannot contain normal structs, but we need
+    // the extern struct since it has consitent ABI and won't rearrange the data. This is
+    // required for calling the destructor since it's called by C and not by us.
+    return extern struct {
+        const self_t = @This();
+        const routine_entry_t = *const fn (c_int, *self_t) callconv(.C) c_int;
+        const cmplrdata_t = extern union {
+            priority: c_int,
+            destructors: routine_entry_t,
+        };
 
         shareds: *shareds,
-        routine: kmp_routine_entry_t,
-        privates: pri,
+        routine: routine_entry_t,
+        part_id: c_int,
+        data1: cmplrdata_t,
+        data2: cmplrdata_t,
+        // This can't be a real type since they don't have defined memory structure
+        privates: [@sizeOf(pri)]u8,
+        result: if (ret == void) void else *promise(ret),
 
-        inline fn outline(self: type, comptime f: anytype, comptime ret_type: type) type {
+        inline fn outline(comptime f: anytype) type {
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
             return opaque {
-                pub fn task(gtid: c_int, t: *task_t(void, void)) callconv(.C) c_int {
-                    const real: *self = @ptrCast(t);
+                pub fn task(gtid: c_int, t: *self_t) callconv(.C) c_int {
                     _ = gtid;
-                    _ = ret_type;
 
-                    const _shareds = real.shareds.*;
-                    const _privates = real.privates;
+                    const _shareds = t.shareds.*;
+                    const _privates: pri = std.mem.bytesAsValue(pri, &t.privates).*;
 
-                    if (type_info == .ErrorUnion) {
-                        _ = try @call(.always_inline, f, _shareds ++ _privates);
-                    } else {
-                        _ = @call(.always_inline, f, _shareds ++ _privates);
+                    const r = if (type_info == .ErrorUnion)
+                        try @call(.always_inline, f, _shareds ++ _privates)
+                    else
+                        @call(.always_inline, f, _shareds ++ _privates);
+
+                    if (ret != void) {
+                        var pro = t.result;
+                        pro.result = r;
                     }
-
                     return 0;
                 }
             };
@@ -319,16 +480,42 @@ pub inline fn task_t(comptime shareds: type, comptime pri: type) type {
             comptime f: anytype,
             comptime name: *const ident_t,
             gtid: c_int,
-            flags: kmp_tasking_flags,
+            flags: tasking_flags,
         ) *@This() {
+            const t = &@This().outline(f).task;
             return @ptrCast(__kmpc_omp_task_alloc(
                 name,
                 gtid,
                 @bitCast(flags),
-                @sizeOf(@TypeOf(@This())),
+                @sizeOf(@This()),
                 @sizeOf(@TypeOf(shareds)),
-                @This().outline(@This(), f, void).task,
+                t,
             ));
+        }
+
+        pub inline fn set_data(self: *@This(), sh: *shareds, pr: pri) void {
+            self.shareds = sh;
+            self.privates = std.mem.toBytes(pr);
+        }
+
+        pub inline fn make_promise(self: *@This(), pro: *promise(ret)) void {
+            const head = self.get_header();
+            self.result = pro;
+            head.td_flags.destructors_thunk = 1;
+
+            self.data1.destructors = &opaque {
+                pub fn notify(gtid: c_int, t: *self_t) callconv(.C) c_int {
+                    _ = gtid;
+
+                    t.result.release();
+                    return 0;
+                }
+            }.notify;
+        }
+
+        pub inline fn set_priority(self: *@This(), priority: c_int) void {
+            self.data2.priority = priority;
+            @panic("TODO");
         }
 
         pub inline fn task(self: *@This(), comptime name: *const ident_t, gtid: c_int) c_int {
@@ -341,6 +528,11 @@ pub inline fn task_t(comptime shareds: type, comptime pri: type) type {
 
         pub inline fn complete_if0(self: *@This(), comptime name: *const ident_t, gtid: c_int) void {
             __kmpc_omp_task_complete_if0(name, gtid, self);
+        }
+
+        pub inline fn get_header(self: *@This()) *task_data_t {
+            const ptr = @intFromPtr(self) - @sizeOf(task_data_t);
+            return @ptrFromInt(ptr);
         }
     };
 }

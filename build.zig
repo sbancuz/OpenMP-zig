@@ -30,13 +30,19 @@ fn findOpenMP(b: *std.Build) ![]const u8 {
 const omp_support = struct {
     ompt: bool = false,
     ompd: bool = false,
+    gomp: bool = false,
+    ompx: bool = false,
+    kmp_monitor: bool = false,
 };
 fn checkSupport(b: *std.Build, path: []const u8) !omp_support {
     // The size doesn't matter since function calls stat
     const lib = try std.fs.Dir.readFileAlloc(std.fs.cwd(), b.allocator, path, 1024 * 1024 * 100);
     return .{
-        .ompt = std.mem.containsAtLeast(u8, lib, 1, "ompt_initialize"),
+        .ompt = std.mem.containsAtLeast(u8, lib, 1, "ompt_enable"),
         .ompd = std.mem.containsAtLeast(u8, lib, 1, "ompd_init"),
+        .gomp = std.mem.containsAtLeast(u8, lib, 1, "GOMP"),
+        .ompx = std.mem.containsAtLeast(u8, lib, 1, "ompx"),
+        .kmp_monitor = std.mem.containsAtLeast(u8, lib, 1, "__kmp_init_monitor"),
     };
 }
 
@@ -59,6 +65,10 @@ pub fn build(b: *std.Build) !void {
     const options = b.addOptions();
     options.addOption(bool, "ompt_support", support.ompt);
     options.addOption(bool, "ompd_support", support.ompd);
+    options.addOption(bool, "gomp_support", support.gomp);
+    options.addOption(bool, "ompx_support", support.ompx);
+    options.addOption(bool, "kmp_monitor_support", support.kmp_monitor);
+
     const opts_mod = options.createModule();
 
     lib.root_module.addImport("build_options", opts_mod);

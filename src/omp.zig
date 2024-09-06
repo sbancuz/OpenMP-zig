@@ -4,6 +4,8 @@ const c = @cImport({
     @cInclude("omp.h");
     @cInclude("omp-tools.h");
 });
+
+const options = @import("build_options");
 const omp = @This();
 const in = @import("input_handler.zig");
 pub const proc_bind = enum(c_int) {
@@ -734,6 +736,11 @@ pub inline fn masked() type {
     };
 }
 
+pub const promise = kmp.promise;
+inline fn maybe_promise(comptime T: type) type {
+    return if (T == void) void else promise(T);
+}
+
 pub inline fn task(
     comptime opts: task_opts,
 ) type {
@@ -743,7 +750,7 @@ pub inline fn task(
             comptime f: anytype,
             cond: bool,
             fin: bool,
-        ) in.copy_ret(f) {
+        ) *promise(in.copy_ret(f)) {
             const id = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "task" ++ @typeName(@TypeOf(f)),
@@ -757,16 +764,30 @@ pub inline fn task(
             // in.check_args(@TypeOf(private_args));
             in.check_fn_signature(f);
 
-            const t_type = kmp.task_t(@TypeOf(norm.shared), @TypeOf(private_args));
-            var real_task = t_type.alloc(
+            const t_type = kmp.task_t(
+                @TypeOf(norm.shared),
+                @TypeOf(private_args),
+                in.copy_ret(f),
+            );
+
+            const flags = kmp.tasking_flags{
+                .tiedness = @intFromBool(!opts.untied),
+                .final = @intFromBool(fin),
+            };
+
+            const real_task = t_type.alloc(
                 f,
                 &id,
                 global_ctx.global_tid,
-                .{ .tiedness = @intFromBool(!opts.untied), .final = @intFromBool(fin) },
+                flags,
             );
+            real_task.set_data(&norm.shared, private_args);
 
-            real_task.shareds = &norm.shared;
-            real_task.privates = private_args;
+            // TODO: do something better with this error...
+            var pro = if (in.copy_ret(f) == void) undefined else promise(in.copy_ret(f)).init() catch @panic("Buy more RAM lol");
+            if (@TypeOf(pro) == *kmp.promise(in.copy_ret(f))) {
+                real_task.make_promise(pro);
+            }
 
             if (comptime opts.iff) {
                 if (!cond) {
@@ -779,22 +800,22 @@ pub inline fn task(
                     }
 
                     real_task.complete_if0(&id, global_ctx.global_tid);
-
-                    // TODO: return some sort of promise
-                    return undefined;
                 }
+
+                if (@TypeOf(pro) == *promise(in.copy_ret(f))) {
+                    pro.release();
+                }
+                return pro;
             }
 
             _ = real_task.task(&id, global_ctx.global_tid);
-
-            // TODO: return some sort of promise
-            return undefined;
+            return pro;
         }
 
         pub inline fn run(
             args: anytype,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) *maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, false, false);
         }
 
@@ -802,7 +823,7 @@ pub inline fn task(
             cond: bool,
             args: anytype,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) *maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, cond, false);
         }
 
@@ -811,20 +832,22 @@ pub inline fn task(
             final: bool,
             args: anytype,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) *maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, cond, final);
         }
+
         pub inline fn run_final(
             final: bool,
             args: anytype,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) *maybe_promise(in.copy_ret(f)) {
             return run_impl(args, f, false, final);
         }
     };
 
     return struct {
         pub const run = if (opts.iff) api.run_if else api.run;
+        // pub const run = api.run;
         pub const run_final = if (opts.iff) api.run_if_final else api.run_final;
     };
 }
