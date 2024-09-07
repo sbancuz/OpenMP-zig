@@ -29,6 +29,7 @@ pub const parallel_opts = struct {
     iff: bool = false,
     proc_bind: proc_bind = .default,
     reduction: []const reduction_operators = &[0]reduction_operators{},
+    ret_reduction: reduction_operators = .none,
 };
 
 pub const task_opts = struct {
@@ -42,11 +43,13 @@ pub const parallel_for_opts = struct {
     chunk_size: c_int = 1,
     ordered: bool = false,
     reduction: []const reduction_operators = &[0]reduction_operators{},
+    ret_reduction: reduction_operators = .none,
     nowait: bool = false,
 };
 
 pub const sections_opts = struct {
     reduction: []const reduction_operators = &[0]reduction_operators{},
+    ret_reduction: reduction_operators = .none,
     nowait: bool = false,
 };
 pub const ctx = struct {
@@ -65,6 +68,8 @@ inline fn in_workshare(
     comptime red: []const kmp.reduction_operators,
     comptime do_copy: bool,
     comptime f: anytype,
+    comptime ret_t: type,
+    comptime optional: bool,
 ) type {
     return struct {
         const static = struct {
@@ -76,7 +81,7 @@ inline fn in_workshare(
             pre: anytype,
             args: anytype,
             post: anytype,
-        ) in.copy_ret(f) {
+        ) if (optional) ?ret_t else ret_t {
             const private_copy = if (do_copy) in.make_another(args.private) else args.private;
             const firstprivate_copy = if (do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
             const reduction_copy = if (do_copy) in.shallow_copy(args.reduction) else args.reduction;
@@ -98,19 +103,36 @@ inline fn in_workshare(
                 }
             };
 
-            const ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
+            var ret = if (@typeInfo(ret_t) == .ErrorUnion)
                 @call(.always_inline, f, true_args) catch |err| err
             else
                 @call(.always_inline, f, true_args);
 
-            if (red.len > 0) {
+            if (red.len > 0 or (ret_t != void and !optional)) {
                 const id: kmp.ident_t = .{
                     .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
-                reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
+                if (optional) {
+                    const to_ret_bytes = [_]u8{0} ** @sizeOf(ret_t);
+                    var to_ret = std.mem.bytesAsValue(ret_t, &to_ret_bytes).*;
+
+                    const reduce_args = if (ret_t == void) reduction_copy else reduction_copy ++ .{&ret};
+                    const reduce_dest = if (ret_t == void) args.reduction else args.reduction ++ .{&to_ret};
+                    const has_result = reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);
+                    if (has_result > 0) return to_ret;
+                } else {
+                    const has_result = reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
+                    if (has_result > 0) return ret;
+                }
             }
-            return ret;
+
+            if (ret_t != void) {
+                if (optional) {
+                    return null;
+                }
+                return ret;
+            }
         }
     };
 }
@@ -153,10 +175,16 @@ pub inline fn parallel(
                         .bound_tid = btid.*,
                     };
 
-                    args.ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
-                        in_workshare(in_opts.reduction, true, f).run(true, .{}, args.v, .{}) catch |err| err
+                    const red = if (in_opts.ret_reduction == .none) in_opts.reduction else in_opts.reduction ++ .{in_opts.ret_reduction};
+
+                    const maybe_ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
+                        in_workshare(red, true, f, in.copy_ret(f), true).run(true, .{}, args.v, .{}) catch |err| err
                     else
-                        in_workshare(in_opts.reduction, true, f).run(true, .{}, args.v, .{});
+                        in_workshare(red, true, f, in.copy_ret(f), true).run(true, .{}, args.v, .{});
+
+                    if (maybe_ret) |r| {
+                        args.ret = r;
+                    }
 
                     return;
                 }
@@ -189,7 +217,7 @@ pub inline fn parallel(
         ) in.copy_ret(f) {
             in.check_fn_signature(f);
 
-            const ret = make_args(args, f);
+            var ret = make_args(args, f);
             const id: kmp.ident_t = .{ .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC), .psource = "parallel" ++ @typeName(@TypeOf(f)), .reserved_3 = 0x1e };
             make_proc_bind(&id, opts.proc_bind);
             const outline = parallel_outline(f, @TypeOf(ret), opts).workshare_outline;
@@ -353,11 +381,18 @@ inline fn reduce(
     copies: @TypeOf(out_reduction),
     comptime operators: []const kmp.reduction_operators,
     lck: *kmp.critical_name_t,
-) void {
-    const res = if (nowait)
-        kmp.reduce_nowait(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, global_ctx.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck)
-    else
-        kmp.reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, id, global_ctx.global_tid, copies.len, @sizeOf(@TypeOf(out_reduction)), @ptrCast(@constCast(&copies)), operators, lck);
+) c_int {
+    const red_func = if (nowait) kmp.reduce_nowait else kmp.reduce;
+    const res = red_func(
+        @typeInfo(@TypeOf(out_reduction)).Struct.fields,
+        id,
+        global_ctx.global_tid,
+        copies.len,
+        @sizeOf(@TypeOf(out_reduction)),
+        @ptrCast(@constCast(&copies)),
+        operators,
+        lck,
+    );
 
     switch (res) {
         1 => {
@@ -371,10 +406,11 @@ inline fn reduce(
         },
         2 => {
             kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize_atomic(out_reduction, copies);
-            return;
         },
-        else => return,
+        else => {},
     }
+
+    return res;
 }
 
 pub inline fn loop(
@@ -418,34 +454,36 @@ inline fn _loop(
             var stri: opts.idx = 1;
             const incr: opts.idx = increment;
 
-            kmp.for_static_init(opts.idx, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), &last_iter, &low, &upp, &stri, incr, opts.chunk_size);
+            kmp.for_static_init(
+                opts.idx,
+                &id,
+                global_ctx.global_tid,
+                to_kmp_sched(opts.sched),
+                &last_iter,
+                &low,
+                &upp,
+                &stri,
+                incr,
+                opts.chunk_size,
+            );
 
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            const to_ret_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
+            var to_ret = std.mem.bytesAsValue(in.copy_ret(f), &to_ret_bytes).*;
+
+            const red = kmp.create_reduce(@typeInfo(@TypeOf(.{to_ret})).Struct.fields, &.{opts.ret_reduction});
             if (opts.chunk_size > 1) {
                 while (low + opts.chunk_size < upper) : (low += stri) {
                     inline for (0..opts.chunk_size) |i| {
-                        if (type_info == .ErrorUnion) {
-                            _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ args) catch |err| err;
-                        } else {
-                            _ = @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ args);
-                        }
+                        red.single(&to_ret, @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ args) catch |err| err);
                     }
                 }
                 while (low < upper) : (low += incr) {
-                    if (type_info == .ErrorUnion) {
-                        _ = @call(.always_inline, f, .{low} ++ args) catch |err| err;
-                    } else {
-                        _ = @call(.always_inline, f, .{low} ++ args);
-                    }
+                    red.single(&to_ret, @call(.always_inline, f, .{low} ++ args));
                 }
             } else {
                 var i: opts.idx = low;
                 while (i <= upp) : (i += incr) {
-                    if (type_info == .ErrorUnion) {
-                        _ = @call(.always_inline, f, .{i} ++ args) catch |err| err;
-                    } else {
-                        _ = @call(.always_inline, f, .{i} ++ args);
-                    }
+                    red.single(&to_ret, @call(.always_inline, f, .{i} ++ args));
                 }
             }
 
@@ -459,6 +497,8 @@ inline fn _loop(
             if (!opts.nowait) {
                 barrier();
             }
+
+            return to_ret;
         }
 
         pub inline fn dynamic_impl(
@@ -481,23 +521,24 @@ inline fn _loop(
             const incr: opts.idx = increment;
             kmp.dispatch_init(opts.idx, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
 
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
+            const to_ret_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
+            var to_ret = std.mem.bytesAsValue(in.copy_ret(f), &to_ret_bytes).*;
+
+            const red = kmp.create_reduce(@typeInfo(std.builtin.Type.Struct{in.copy_ret(f)}).Struct.fields, &.{opts.ret_reduction});
             while (kmp.dispatch_next(opts.idx, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
                 defer kmp.dispatch_fini(opts.idx, &id, global_ctx.global_tid);
 
                 var i: opts.idx = low;
                 while (i <= upp) : (i += incr) {
-                    if (type_info == .ErrorUnion) {
-                        _ = @call(.always_inline, f, .{i} ++ args) catch |err| err;
-                    } else {
-                        _ = @call(.always_inline, f, .{i} ++ args);
-                    }
+                    red.single(&to_ret, @call(.always_inline, f, .{i} ++ args));
                 }
             }
 
             if (!opts.nowait) {
                 barrier();
             }
+
+            return to_ret;
         }
 
         pub inline fn static(
@@ -512,13 +553,11 @@ inline fn _loop(
 
             const f_type_info = @typeInfo(@TypeOf(f));
             if (f_type_info.Fn.params.len < 1) {
-                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
             }
             const do_copy = comptime !is_from_sections;
 
-            in_workshare(opts.reduction, do_copy, static_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
-
-            return undefined;
+            return in_workshare(opts.reduction, do_copy, static_impl, in.copy_ret(f), false).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
         }
 
         pub inline fn dynamic(
@@ -535,12 +574,10 @@ inline fn _loop(
 
             const f_type_info = @typeInfo(@TypeOf(f));
             if (f_type_info.Fn.params.len < 1) {
-                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[1].type.?));
+                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
             }
 
-            in_workshare(opts.reduction, true, dynamic_impl).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
-
-            return undefined;
+            return in_workshare(opts.reduction, true, dynamic_impl, in.copy_ret(f), false).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
         }
     };
 
@@ -660,7 +697,7 @@ pub inline fn single() type {
         pub inline fn run(
             args: anytype,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) void_or_opt(in.copy_ret(f)) {
             in.check_args(@TypeOf(args));
             in.check_fn_signature(f);
 
@@ -674,27 +711,29 @@ pub inline fn single() type {
                 .reserved_3 = 0x27,
             };
 
-            const res = brk: {
-                if (kmp.single(&single_id, global_ctx.global_tid) == 1) {
-                    const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-
-                    const r = if (type_info == .ErrorUnion)
-                        try @call(.always_inline, f, args)
-                    else
-                        @call(.always_inline, f, args);
-
+            if (kmp.single(&single_id, global_ctx.global_tid) == 1) {
+                defer {
                     kmp.end_single(&single_id, global_ctx.global_tid);
-
-                    break :brk r;
+                    kmp.barrier(&barrier_id, global_ctx.global_tid);
                 }
+                const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
-                break :brk undefined;
-            };
+                return if (type_info == .ErrorUnion)
+                    try @call(.always_inline, f, args)
+                else
+                    @call(.always_inline, f, args);
+            }
+
             kmp.barrier(&barrier_id, global_ctx.global_tid);
-
-            return res;
+            if (in.copy_ret(f) != void) {
+                return null;
+            }
         }
     };
+}
+
+pub inline fn void_or_opt(comptime T: type) type {
+    return if (T == void) void else ?T;
 }
 
 pub inline fn master() type {
@@ -702,7 +741,7 @@ pub inline fn master() type {
         pub inline fn run(
             args: anytype,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) void_or_opt(in.copy_ret(f)) {
             return masked.run(only_master, args, f);
         }
     };
@@ -715,7 +754,7 @@ pub inline fn masked() type {
             args: anytype,
             filter: i32,
             comptime f: anytype,
-        ) in.copy_ret(f) {
+        ) void_or_opt(in.copy_ret(f)) {
             in.check_args(@TypeOf(args));
             in.check_fn_signature(f);
 
@@ -732,12 +771,15 @@ pub inline fn masked() type {
                     return @call(.always_inline, f, args);
                 }
             }
+            if (void_or_opt(in.copy_ret(f)) != void) {
+                return null;
+            }
         }
     };
 }
 
 pub const promise = kmp.promise;
-inline fn maybe_promise(comptime T: type) type {
+inline fn void_or_promise_ptr(comptime T: type) type {
     return if (T == void) void else *promise(T);
 }
 
@@ -750,7 +792,7 @@ pub inline fn task(
             comptime f: anytype,
             cond: bool,
             fin: bool,
-        ) maybe_promise(in.copy_ret(f)) {
+        ) void_or_promise_ptr(in.copy_ret(f)) {
             const id = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "task" ++ @typeName(@TypeOf(f)),
@@ -784,7 +826,7 @@ pub inline fn task(
             real_task.set_data(&norm.shared, private_args);
 
             // TODO: do something better with this error...
-            var pro: maybe_promise(in.copy_ret(f)) = if (in.copy_ret(f) == void) undefined else promise(in.copy_ret(f)).init() catch @panic("Buy more RAM lol");
+            var pro: void_or_promise_ptr(in.copy_ret(f)) = if (in.copy_ret(f) == void) undefined else promise(in.copy_ret(f)).init() catch @panic("Buy more RAM lol");
             if (@TypeOf(pro) == *kmp.promise(in.copy_ret(f))) {
                 real_task.make_promise(pro);
             }
@@ -815,7 +857,7 @@ pub inline fn task(
         pub inline fn run(
             args: anytype,
             comptime f: anytype,
-        ) maybe_promise(in.copy_ret(f)) {
+        ) void_or_promise_ptr(in.copy_ret(f)) {
             return run_impl(args, f, false, false);
         }
 
@@ -823,8 +865,16 @@ pub inline fn task(
             cond: bool,
             args: anytype,
             comptime f: anytype,
-        ) maybe_promise(in.copy_ret(f)) {
+        ) void_or_promise_ptr(in.copy_ret(f)) {
             return run_impl(args, f, cond, false);
+        }
+
+        pub inline fn run_final(
+            final: bool,
+            args: anytype,
+            comptime f: anytype,
+        ) void_or_promise_ptr(in.copy_ret(f)) {
+            return run_impl(args, f, false, final);
         }
 
         pub inline fn run_if_final(
@@ -832,16 +882,8 @@ pub inline fn task(
             final: bool,
             args: anytype,
             comptime f: anytype,
-        ) maybe_promise(in.copy_ret(f)) {
+        ) void_or_promise_ptr(in.copy_ret(f)) {
             return run_impl(args, f, cond, final);
-        }
-
-        pub inline fn run_final(
-            final: bool,
-            args: anytype,
-            comptime f: anytype,
-        ) maybe_promise(in.copy_ret(f)) {
-            return run_impl(args, f, false, final);
         }
     };
 
@@ -868,11 +910,11 @@ pub inline fn taskwait() void {
     kmp.taskwait(&id, global_ctx.global_tid);
 }
 
-////////////////////////////////////////////////////////////////////////////////////
-/// Runtime API ////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////////
+// / Runtime API ////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////////
 
-/// Setters
+// Setters
 pub inline fn set_num_threads(num_threads: u32) void {
     c.omp_set_num_threads(@intCast(num_threads));
 }
@@ -894,7 +936,7 @@ pub inline fn set_schedule(kind: schedule, chunk_size: u32) void {
     c.omp_set_schedule(kind, chunk_size);
 }
 
-/// Getters
+// Getters
 pub inline fn get_num_threads() u32 {
     return @intCast(c.omp_get_num_threads());
 }
@@ -958,8 +1000,8 @@ pub inline fn get_max_task_priority() u32 {
     return @intCast(c.omp_get_max_task_priority());
 }
 
-/// Locks
-///     OpenMP 5.0  Synchronization hints
+// Locks
+//     OpenMP 5.0  Synchronization hints
 pub const sync_hint_t = enum(c_int) {
     none = 0,
     uncontended = 1,
@@ -1126,18 +1168,18 @@ inline fn target_disassociate_ptr(ptr: *const anyopaque, device_num: u32) void {
     c.omp_target_disassociate_ptr(ptr, @intCast(device_num));
 }
 
-///     OpenMP 5.0
+//     OpenMP 5.0
 pub inline fn get_device_num() u32 {
     return @intCast(c.omp_get_device_num());
 }
 
-///     typedef void * omp_depend_t;
+//     typedef void * omp_depend_t;
 pub const depend_t = *anyopaque;
 
-///     OpenMP 5.1 interop
+//     OpenMP 5.1 interop
 // TODO: Maybe `usize` is better here, but intptr_t is supposed to be an int
 pub const intptr_t = isize;
-/// 0..omp_get_num_interop_properties()-1 are reserved for implementation-defined properties
+// 0..omp_get_num_interop_properties()-1 are reserved for implementation-defined properties
 pub const interop_property_t = enum(c_int) {
     fr_id = -1,
     fr_name = -2,
@@ -1279,7 +1321,7 @@ inline fn target_memcpy_rect_async(
     );
 }
 
-/// OpenMP 6.0 device memory routines
+// OpenMP 6.0 device memory routines
 pub inline fn target_memsset(ptr: *u8, value: c_int, size: usize, device_num: c_int) *u8 {
     return c.omp_target_memset(ptr, value, size, device_num);
 }

@@ -60,6 +60,7 @@ pub const ident_t = extern struct {
     psource: [*:0]const u8,
 };
 
+// TODO: see this alignment because it seems strange
 pub const kmpc_micro_t = fn (global_tid: *c_int, bound_tid: *c_int, args: *align(@alignOf(usize)) anyopaque) callconv(.C) void;
 
 extern "omp" fn __kmpc_fork_call(name: *const ident_t, argc: c_int, fun: *const kmpc_micro_t, ...) void;
@@ -570,6 +571,7 @@ pub const reduction_operators = enum(c_int) {
     logical_or = 7,
     max = 8,
     min = 9,
+    none = 10,
 };
 
 pub inline fn create_reduce(
@@ -618,11 +620,54 @@ pub inline fn create_reduce(
                         .min => {
                             l.* = @min(l.*, r.*);
                         },
+                        .none => {
+                            @compileError("Specify the reduction operator");
+                        },
                     }
                 }
             }
         }
 
+        pub inline fn single(
+            lhs: anytype,
+            rhs: @TypeOf(lhs.*),
+        ) void {
+            inline for (reduce_operators) |op| {
+                switch (op) {
+                    .plus => {
+                        lhs.* += rhs;
+                    },
+                    .mult => {
+                        lhs.* *= rhs;
+                    },
+                    .minus => {
+                        lhs.* -= rhs;
+                    },
+                    .bitwise_and => {
+                        lhs.* &= rhs;
+                    },
+                    .bitwise_or => {
+                        lhs.* |= rhs;
+                    },
+                    .bitwise_xor => {
+                        lhs.* ^= rhs;
+                    },
+                    .logical_and => {
+                        lhs.* = lhs.* and rhs;
+                    },
+                    .logical_or => {
+                        lhs.* = lhs.* or rhs;
+                    },
+                    .max => {
+                        lhs.* = @max(lhs.*, rhs);
+                    },
+                    .min => {
+                        lhs.* = @min(lhs.*, rhs);
+                    },
+                    .none => {},
+                }
+            }
+        }
         pub inline fn finalize_atomic(
             lhs: anytype,
             rhs: @TypeOf(lhs),
@@ -660,6 +705,9 @@ pub inline fn create_reduce(
                         },
                         .min => {
                             _ = @atomicRmw(T, l, .Min, r.*, .acq_rel);
+                        },
+                        .none => {
+                            @compileError("Specify the reduction operator");
                         },
                     }
                 }
@@ -711,6 +759,9 @@ pub inline fn create_reduce(
                     .min => {
                         const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = @min(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
+                    },
+                    .none => {
+                        @compileError("Specify the reduction operator");
                     },
                 }
             }
