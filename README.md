@@ -29,17 +29,18 @@ fn main() void {
 - [x] `#pragma omp critical`
 - [x] `#pragma omp barrier`
 - [x] `#pragma omp task`
-
+- [ ] `#pragma omp atomic` NOT POSSIBLE TO IMPLEMENT
+      
 To see some other examples of the library check the tests folder.
 
 ## Extensions
 
 ### Return
 
-All of the directives can return values. To return something you may need to specify the `ret_reduction' parameter.
+All of the directives can return values. To return something you may need to specify the `ret_reduction` parameter.
 
 > [!WARNING]
-> The promises that are returned from the `task' directive will be heap allocated. So make sure to deinit() them!
+> The promises that are returned from the `task` directive will be heap allocated. So make sure to deinit() them!
 
 ### Errors
 
