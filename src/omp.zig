@@ -24,24 +24,8 @@ pub const schedule = enum(c_long) {
     monotonic = 0x80000000,
 };
 
-const TypeId = *const opaque {};
-pub const typeId = struct {
-    inline fn typeId() TypeId {
-        comptime return typeIdImpl(opaque {});
-    }
-    inline fn typeIdImpl(comptime T: type) TypeId {
-        _ = T;
-        const gen = struct {
-            var id: u1 = undefined;
-        };
-        return @ptrCast(&gen.id);
-    }
-}.typeId;
-
 pub const reduction_operators = kmp.reduction_operators;
 pub const parallel_opts = struct {
-    const __unique: TypeId = typeId();
-
     iff: bool = false,
     proc_bind: proc_bind = .default,
     reduction: []const reduction_operators = &[0]reduction_operators{},
