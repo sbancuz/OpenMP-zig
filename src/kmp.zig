@@ -572,6 +572,8 @@ pub const reduction_operators = enum(c_int) {
     max = 8,
     min = 9,
     none = 10,
+    id = 11,
+    custom = 12,
 };
 
 pub inline fn create_reduce(
@@ -620,6 +622,8 @@ pub inline fn create_reduce(
                         .min => {
                             l.* = @min(l.*, r.*);
                         },
+                        .id => {},
+                        .custom => l.reduce(r.*),
                         .none => {
                             @compileError("Specify the reduction operator");
                         },
@@ -664,6 +668,8 @@ pub inline fn create_reduce(
                     .min => {
                         lhs.* = @min(lhs.*, rhs);
                     },
+                    .custom => lhs.reduce(rhs.*),
+                    .id => {},
                     .none => {},
                 }
             }
@@ -706,6 +712,8 @@ pub inline fn create_reduce(
                         .min => {
                             _ = @atomicRmw(T, l, .Min, r.*, .acq_rel);
                         },
+                        .custom => l.atomic_reduce(r.*),
+                        .id => {},
                         .none => {
                             @compileError("Specify the reduction operator");
                         },
@@ -760,6 +768,11 @@ pub inline fn create_reduce(
                         const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
                         l.* = @min(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
                     },
+                    .custom => {
+                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
+                        l.reduce(@as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
+                    },
+                    .id => {},
                     .none => {
                         @compileError("Specify the reduction operator");
                     },
