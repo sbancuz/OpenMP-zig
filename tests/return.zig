@@ -23,7 +23,7 @@ test "parallel_return" {
     try std.testing.expect(num_failed == 0);
 }
 
-fn test_omp_single_default() !bool {
+fn test_omp_single_return() !bool {
     const result = omp.parallel(.{ .ret_reduction = .plus })
         .run(.{}, struct {
         fn f() usize {
@@ -43,14 +43,14 @@ fn test_omp_single_default() !bool {
     return result == 1;
 }
 
-test "single_default" {
+test "single_return" {
     if (omp.get_max_threads() < 2) {
         omp.set_num_threads(8);
     }
 
     var num_failed: u32 = 0;
     for (0..params.repetitions) |_| {
-        if (!try test_omp_single_default()) {
+        if (!try test_omp_single_return()) {
             num_failed += 1;
         }
     }
@@ -58,7 +58,7 @@ test "single_default" {
     try std.testing.expect(num_failed == 0);
 }
 
-fn test_omp_task_default() !bool {
+fn test_omp_task_return() !bool {
     const result = omp.parallel(.{ .ret_reduction = .plus })
         .run(.{}, struct {
         fn f() usize {
@@ -84,14 +84,14 @@ fn test_omp_task_default() !bool {
     return result == 1;
 }
 
-test "task_default" {
+test "task_return" {
     if (omp.get_max_threads() < 2) {
         omp.set_num_threads(8);
     }
 
     var num_failed: u32 = 0;
     for (0..params.repetitions) |_| {
-        if (!try test_omp_task_default()) {
+        if (!try test_omp_task_return()) {
             num_failed += 1;
         }
     }
@@ -99,7 +99,7 @@ test "task_default" {
     try std.testing.expect(num_failed == 0);
 }
 
-fn test_omp_loop_default() !bool {
+fn test_omp_loop_return() !bool {
     const res = omp.parallel(.{ .ret_reduction = .plus })
         .run(.{}, struct {
         fn f() usize {
@@ -110,22 +110,21 @@ fn test_omp_loop_default() !bool {
                     return 1;
                 }
             }.f);
-
             return a;
         }
     }.f);
 
-    return params.loop_count == res;
+    return params.loop_count * omp.get_max_threads() == res;
 }
 
-test "loop_default" {
+test "loop_return" {
     if (omp.get_max_threads() < 2) {
         omp.set_num_threads(8);
     }
 
     var num_failed: u32 = 0;
     for (0..1) |_| {
-        if (!try test_omp_loop_default()) {
+        if (!try test_omp_loop_return()) {
             num_failed += 1;
         }
     }

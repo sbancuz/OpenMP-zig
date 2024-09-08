@@ -24,8 +24,24 @@ pub const schedule = enum(c_long) {
     monotonic = 0x80000000,
 };
 
+const TypeId = *const opaque {};
+pub const typeId = struct {
+    inline fn typeId() TypeId {
+        comptime return typeIdImpl(opaque {});
+    }
+    inline fn typeIdImpl(comptime T: type) TypeId {
+        _ = T;
+        const gen = struct {
+            var id: u1 = undefined;
+        };
+        return @ptrCast(&gen.id);
+    }
+}.typeId;
+
 pub const reduction_operators = kmp.reduction_operators;
 pub const parallel_opts = struct {
+    const __unique: TypeId = typeId();
+
     iff: bool = false,
     proc_bind: proc_bind = .default,
     reduction: []const reduction_operators = &[0]reduction_operators{},
@@ -81,6 +97,7 @@ inline fn in_workshare(
             pre: anytype,
             args: anytype,
             post: anytype,
+            ret_reduction: *ret_t,
         ) if (optional) ?ret_t else ret_t {
             const private_copy = if (do_copy) in.make_another(args.private) else args.private;
             const firstprivate_copy = if (do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
@@ -108,22 +125,27 @@ inline fn in_workshare(
             else
                 @call(.always_inline, f, true_args);
 
-            if (red.len > 0 or (ret_t != void and !optional)) {
+            if (red.len > 0 or ret_t != void) {
                 const id: kmp.ident_t = .{
                     .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                     .psource = "parallel" ++ @typeName(@TypeOf(f)),
                 };
-                if (optional) {
-                    const to_ret_bytes = [_]u8{0} ** @sizeOf(ret_t);
-                    var to_ret = std.mem.bytesAsValue(ret_t, &to_ret_bytes).*;
-
+                if (ret_t != void) {
+                    // TODO: Figure out why do I need to do this... I feel like something in the comptime eval is broken
+                    var sus = ret_reduction.*;
                     const reduce_args = if (ret_t == void) reduction_copy else reduction_copy ++ .{&ret};
-                    const reduce_dest = if (ret_t == void) args.reduction else args.reduction ++ .{&to_ret};
+                    const reduce_dest = if (ret_t == void) args.reduction else args.reduction ++ .{&sus};
                     const has_result = reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);
-                    if (has_result > 0) return to_ret;
+
+                    if (has_result > 0) {
+                        ret_reduction.* = sus;
+                        return ret_reduction.*;
+                    }
                 } else {
                     const has_result = reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
-                    if (has_result > 0) return ret;
+                    if (has_result > 0) {
+                        return ret_reduction.*;
+                    }
                 }
             }
 
@@ -165,6 +187,9 @@ pub inline fn parallel(
             comptime in_opts: parallel_opts,
         ) type {
             return opaque {
+                const red = if (in_opts.ret_reduction == .none) in_opts.reduction else in_opts.reduction ++ .{in_opts.ret_reduction};
+                const work = in_workshare(red, true, f, in.copy_ret(f), true);
+
                 fn workshare_outline(
                     gtid: *c_int,
                     btid: *c_int,
@@ -175,12 +200,12 @@ pub inline fn parallel(
                         .bound_tid = btid.*,
                     };
 
-                    const red = if (in_opts.ret_reduction == .none) in_opts.reduction else in_opts.reduction ++ .{in_opts.ret_reduction};
-
+                    const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
+                    var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
                     const maybe_ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
-                        in_workshare(red, true, f, in.copy_ret(f), true).run(true, .{}, args.v, .{}) catch |err| err
+                        work.run(true, .{}, args.v, .{}, &reduction_val) catch |err| err
                     else
-                        in_workshare(red, true, f, in.copy_ret(f), true).run(true, .{}, args.v, .{});
+                        work.run(true, .{}, args.v, .{}, &reduction_val);
 
                     if (maybe_ret) |r| {
                         args.ret = r;
@@ -534,10 +559,6 @@ inline fn _loop(
                 }
             }
 
-            if (!opts.nowait) {
-                barrier();
-            }
-
             return to_ret;
         }
 
@@ -556,8 +577,27 @@ inline fn _loop(
                 @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
             }
             const do_copy = comptime !is_from_sections;
+            const red = if (opts.ret_reduction == .none) opts.reduction else opts.reduction ++ .{opts.ret_reduction};
 
-            return in_workshare(opts.reduction, do_copy, static_impl, in.copy_ret(f), false).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
+            const st = struct {
+                const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
+                var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
+            };
+
+            const work = in_workshare(
+                red,
+                do_copy,
+                static_impl,
+                in.copy_ret(f),
+                false,
+            );
+
+            _ = work.run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            if (!opts.nowait) {
+                barrier();
+            }
+
+            return st.reduction_val;
         }
 
         pub inline fn dynamic(
@@ -577,7 +617,25 @@ inline fn _loop(
                 @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
             }
 
-            return in_workshare(opts.reduction, true, dynamic_impl, in.copy_ret(f), false).run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f });
+            const st = struct {
+                const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
+                var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
+            };
+            const red = if (opts.ret_reduction == .none) opts.reduction else opts.reduction ++ .{opts.ret_reduction};
+            const work = in_workshare(
+                red,
+                true,
+                dynamic_impl,
+                in.copy_ret(f),
+                false,
+            );
+
+            _ = work.run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            if (!opts.nowait) {
+                barrier();
+            }
+
+            return st.reduction_val;
         }
     };
 
