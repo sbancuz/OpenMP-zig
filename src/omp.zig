@@ -34,6 +34,7 @@ pub const parallel_opts = struct {
 
 pub const task_opts = struct {
     iff: bool = false,
+    final: bool = false,
     untied: bool = false,
 };
 
@@ -930,9 +931,8 @@ pub inline fn task(
     };
 
     return struct {
-        pub const run = if (opts.iff) api.run_if else api.run;
-        // pub const run = api.run;
-        pub const run_final = if (opts.iff) api.run_if_final else api.run_final;
+        // TODO: Find a way to format it better
+        pub const run = if (opts.iff and opts.final) api.run_if_final else if (opts.iff and !opts.final) api.run_if else if (!opts.iff and opts.final) api.run_final else api.run;
     };
 }
 

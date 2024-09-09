@@ -126,8 +126,8 @@ fn test_omp_task_result() !bool {
                         // enter the next step of the loop!
 
                         const myi = i;
-                        omp.task(.{})
-                            .run_final(i >= 5, .{ .shared = .{ ff_tids, ff_inctids }, .firstprivate = .{myi} }, struct {
+                        omp.task(.{ .final = true })
+                            .run(i >= 5, .{ .shared = .{ ff_tids, ff_inctids }, .firstprivate = .{myi} }, struct {
                             fn f(fff_tids: t_type, fff_inctids: t_type, f_myi: usize) void {
                                 fff_tids[f_myi] = omp.get_thread_num();
 
