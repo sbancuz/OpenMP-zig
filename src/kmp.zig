@@ -3,6 +3,12 @@ const omp = @import("omp.zig");
 const opts = @import("build_options");
 const ompt = @import("ompt.zig");
 
+pub threadlocal var ctx: context = undefined;
+pub const context = struct {
+    global_tid: c_int,
+    bound_tid: c_int,
+};
+
 pub const ident_flags = enum(c_int) {
     // /*! Use trampoline for internal microtasks */
     IDENT_IMB = 0x01,
@@ -560,228 +566,6 @@ pub inline fn taskwait(comptime name: *const ident_t, gtid: c_int) c_int {
 // }
 //
 
-pub const reduction_operators = enum(c_int) {
-    plus = 0,
-    mult = 1,
-    minus = 2,
-    bitwise_and = 3,
-    bitwise_or = 4,
-    bitwise_xor = 5,
-    logical_and = 6,
-    logical_or = 7,
-    max = 8,
-    min = 9,
-    none = 10,
-    id = 11,
-    custom = 12,
-};
-
-pub inline fn create_reduce(
-    comptime types: []const std.builtin.Type.StructField,
-    comptime reduce_operators: []const reduction_operators,
-) type {
-    if (types.len != reduce_operators.len) {
-        @compileError("The number of types and operators must match");
-    }
-
-    return struct {
-        pub inline fn finalize(
-            lhs: anytype,
-            rhs: @TypeOf(lhs),
-        ) void {
-            inline for (lhs, rhs) |l, r| {
-                inline for (reduce_operators) |op| {
-                    switch (op) {
-                        .plus => {
-                            l.* += r.*;
-                        },
-                        .mult => {
-                            l.* *= r.*;
-                        },
-                        .minus => {
-                            l.* -= r.*;
-                        },
-                        .bitwise_and => {
-                            l.* &= r.*;
-                        },
-                        .bitwise_or => {
-                            l.* |= r.*;
-                        },
-                        .bitwise_xor => {
-                            l.* ^= r.*;
-                        },
-                        .logical_and => {
-                            l.* = l.* and r.*;
-                        },
-                        .logical_or => {
-                            l.* = l.* or r.*;
-                        },
-                        .max => {
-                            l.* = @max(l.*, r.*);
-                        },
-                        .min => {
-                            l.* = @min(l.*, r.*);
-                        },
-                        .id => {},
-                        .custom => l.reduce(r.*),
-                        .none => {
-                            @compileError("Specify the reduction operator");
-                        },
-                    }
-                }
-            }
-        }
-
-        pub inline fn single(
-            lhs: anytype,
-            rhs: @TypeOf(lhs.*),
-        ) void {
-            inline for (reduce_operators) |op| {
-                switch (op) {
-                    .plus => {
-                        lhs.* += rhs;
-                    },
-                    .mult => {
-                        lhs.* *= rhs;
-                    },
-                    .minus => {
-                        lhs.* -= rhs;
-                    },
-                    .bitwise_and => {
-                        lhs.* &= rhs;
-                    },
-                    .bitwise_or => {
-                        lhs.* |= rhs;
-                    },
-                    .bitwise_xor => {
-                        lhs.* ^= rhs;
-                    },
-                    .logical_and => {
-                        lhs.* = lhs.* and rhs;
-                    },
-                    .logical_or => {
-                        lhs.* = lhs.* or rhs;
-                    },
-                    .max => {
-                        lhs.* = @max(lhs.*, rhs);
-                    },
-                    .min => {
-                        lhs.* = @min(lhs.*, rhs);
-                    },
-                    .custom => lhs.reduce(rhs.*),
-                    .id => {},
-                    .none => {},
-                }
-            }
-        }
-        pub inline fn finalize_atomic(
-            lhs: anytype,
-            rhs: @TypeOf(lhs),
-        ) void {
-            inline for (lhs, rhs) |l, r| {
-                inline for (reduce_operators, types) |op, type_field| {
-                    const T = @typeInfo(type_field.type).Pointer.child;
-                    switch (op) {
-                        .plus => {
-                            _ = @atomicRmw(T, l, .Add, r.*, .acq_rel);
-                        },
-                        .mult => {
-                            _ = @atomicRmw(T, l, .Mul, r.*, .acq_rel);
-                        },
-                        .minus => {
-                            _ = @atomicRmw(T, l, .Sub, r.*, .acq_rel);
-                        },
-                        .bitwise_and => {
-                            _ = @atomicRmw(T, l, .And, r.*, .acq_rel);
-                        },
-                        .bitwise_or => {
-                            _ = @atomicRmw(T, l, .Or, r.*, .acq_rel);
-                        },
-                        .bitwise_xor => {
-                            _ = @atomicRmw(T, l, .Xor, r.*, .acq_rel);
-                        },
-                        .logical_and => {
-                            _ = @atomicRmw(T, l, .And, r.*, .acq_rel);
-                        },
-                        .logical_or => {
-                            _ = @atomicRmw(T, l, .Or, r.*, .acq_rel);
-                        },
-                        .max => {
-                            _ = @atomicRmw(T, l, .Max, r.*, .acq_rel);
-                        },
-                        .min => {
-                            _ = @atomicRmw(T, l, .Min, r.*, .acq_rel);
-                        },
-                        .custom => l.atomic_reduce(r.*),
-                        .id => {},
-                        .none => {
-                            @compileError("Specify the reduction operator");
-                        },
-                    }
-                }
-            }
-        }
-
-        fn f(
-            lhs: *anyopaque,
-            rhs: *anyopaque,
-        ) callconv(.C) void {
-            inline for (reduce_operators, types) |op, T| {
-                switch (op) {
-                    .plus => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* += @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .mult => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* *= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .minus => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* -= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .bitwise_and => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* &= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .bitwise_or => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* |= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .bitwise_xor => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* ^= @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .logical_and => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* = l.* and @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .logical_or => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* = l.* or @as(*T.type, @ptrCast(@alignCast(rhs))).*.*;
-                    },
-                    .max => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* = @max(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
-                    },
-                    .min => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.* = @min(l.*, @as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
-                    },
-                    .custom => {
-                        const l = @as(*T.type, @ptrCast(@alignCast(lhs))).*;
-                        l.reduce(@as(*T.type, @ptrCast(@alignCast(rhs))).*.*);
-                    },
-                    .id => {},
-                    .none => {
-                        @compileError("Specify the reduction operator");
-                    },
-                }
-            }
-        }
-    };
-}
-
 extern "omp" fn __kmpc_reduce_nowait(
     loc: *const ident_t,
     global_tid: c_int,
@@ -793,17 +577,15 @@ extern "omp" fn __kmpc_reduce_nowait(
 ) c_int;
 /// This call il synchronized and will only occur in the main thread, so we don't need to worry about the reduce_func being called concurrently or use atomics
 pub inline fn reduce_nowait(
-    comptime types: []const std.builtin.Type.StructField,
     comptime loc: *const ident_t,
     global_tid: c_int,
     num_vars: c_int,
     reduce_size: usize,
     reduce_data: *anyopaque,
-    comptime reduce_operators: []const reduction_operators,
+    comptime f: anytype,
     lck: *critical_name_t,
 ) c_int {
-    const reduce_t = create_reduce(types, reduce_operators);
-    return __kmpc_reduce_nowait(loc, global_tid, num_vars, reduce_size, reduce_data, reduce_t.f, lck);
+    return __kmpc_reduce_nowait(loc, global_tid, num_vars, reduce_size, reduce_data, f, lck);
 }
 
 extern "omp" fn __kmpc_end_reduce_nowait(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;
@@ -822,17 +604,15 @@ extern "omp" fn __kmpc_reduce(
 ) c_int;
 /// This call il synchronized and will only occur in the main thread, so we don't need to worry about the reduce_func being called concurrently or use atomics
 pub inline fn reduce(
-    comptime types: []const std.builtin.Type.StructField,
     comptime loc: *const ident_t,
     global_tid: c_int,
     num_vars: c_int,
     reduce_size: usize,
     reduce_data: *anyopaque,
-    comptime reduce_operators: []const reduction_operators,
+    comptime f: anytype,
     lck: *critical_name_t,
 ) c_int {
-    const reduce_t = create_reduce(types, reduce_operators);
-    return __kmpc_reduce(loc, global_tid, num_vars, reduce_size, reduce_data, reduce_t.f, lck);
+    return __kmpc_reduce(loc, global_tid, num_vars, reduce_size, reduce_data, f, lck);
 }
 
 extern "omp" fn __kmpc_end_reduce(loc: *const ident_t, global_tid: c_int, lck: *critical_name_t) void;

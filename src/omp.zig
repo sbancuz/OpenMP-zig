@@ -4,10 +4,11 @@ const c = @cImport({
     @cInclude("omp.h");
     @cInclude("omp-tools.h");
 });
-
 const options = @import("build_options");
-const omp = @This();
 const in = @import("input_handler.zig");
+const reduce = @import("reduce.zig");
+
+const omp = @This();
 pub const proc_bind = enum(c_int) {
     default = 1,
     master = 2,
@@ -24,7 +25,7 @@ pub const schedule = enum(c_long) {
     monotonic = 0x80000000,
 };
 
-pub const reduction_operators = kmp.reduction_operators;
+pub const reduction_operators = reduce.operators;
 pub const parallel_opts = struct {
     iff: bool = false,
     proc_bind: proc_bind = .default,
@@ -52,20 +53,14 @@ pub const sections_opts = struct {
     ret_reduction: reduction_operators = .none,
     nowait: bool = false,
 };
-pub const ctx = struct {
-    global_tid: c_int,
-    bound_tid: c_int,
-};
 
 pub const critical_options = struct {
     sync: sync_hint_t = .none,
     name: []const u8 = "",
 };
 
-threadlocal var global_ctx: ctx = undefined;
-
 inline fn in_workshare(
-    comptime red: []const kmp.reduction_operators,
+    comptime red: []const reduction_operators,
     comptime do_copy: bool,
     comptime f: anytype,
     comptime ret_t: type,
@@ -109,24 +104,24 @@ inline fn in_workshare(
             else
                 @call(.always_inline, f, true_args);
 
+            const id: kmp.ident_t = .{
+                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
+                .psource = "parallel" ++ @typeName(@TypeOf(f)),
+            };
             if (red.len > 0 or ret_t != void) {
-                const id: kmp.ident_t = .{
-                    .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                    .psource = "parallel" ++ @typeName(@TypeOf(f)),
-                };
                 if (ret_t != void) {
                     // TODO: Figure out why do I need to do this... I feel like something in the comptime eval is broken
                     var sus = ret_reduction.*;
                     const reduce_args = if (ret_t == void) reduction_copy else reduction_copy ++ .{&ret};
                     const reduce_dest = if (ret_t == void) args.reduction else args.reduction ++ .{&sus};
-                    const has_result = reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);
+                    const has_result = reduce.reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);
 
                     if (has_result > 0) {
                         ret_reduction.* = sus;
                         return ret_reduction.*;
                     }
                 } else {
-                    const has_result = reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
+                    const has_result = reduce.reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
                     if (has_result > 0) {
                         return ret_reduction.*;
                     }
@@ -179,7 +174,7 @@ pub inline fn parallel(
                     btid: *c_int,
                     args: *R,
                 ) callconv(.C) void {
-                    global_ctx = .{
+                    kmp.ctx = .{
                         .global_tid = gtid.*,
                         .bound_tid = btid.*,
                     };
@@ -203,7 +198,7 @@ pub inline fn parallel(
                     btid: *c_int,
                     args: *R,
                 ) callconv(.C) void {
-                    global_ctx = .{
+                    kmp.ctx = .{
                         .global_tid = gtid.*,
                         .bound_tid = btid.*,
                     };
@@ -384,45 +379,6 @@ pub inline fn parallel(
     };
 }
 
-inline fn reduce(
-    comptime id: *const kmp.ident_t,
-    comptime nowait: bool,
-    out_reduction: anytype,
-    copies: @TypeOf(out_reduction),
-    comptime operators: []const kmp.reduction_operators,
-    lck: *kmp.critical_name_t,
-) c_int {
-    const red_func = if (nowait) kmp.reduce_nowait else kmp.reduce;
-    const res = red_func(
-        @typeInfo(@TypeOf(out_reduction)).Struct.fields,
-        id,
-        global_ctx.global_tid,
-        copies.len,
-        @sizeOf(@TypeOf(out_reduction)),
-        @ptrCast(@constCast(&copies)),
-        operators,
-        lck,
-    );
-
-    switch (res) {
-        1 => {
-            kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize(out_reduction, copies);
-            const end_id = comptime .{
-                .flags = id.*.flags,
-                .psource = id.*.psource,
-                .reserved_3 = 0x1c,
-            };
-            kmp.end_reduce_nowait(&end_id, global_ctx.global_tid, lck);
-        },
-        2 => {
-            kmp.create_reduce(@typeInfo(@TypeOf(out_reduction)).Struct.fields, operators).finalize_atomic(out_reduction, copies);
-        },
-        else => {},
-    }
-
-    return res;
-}
-
 pub inline fn loop(
     comptime idx_T: type,
     comptime opts: parallel_for_opts,
@@ -469,7 +425,7 @@ inline fn _loop(
             kmp.for_static_init(
                 idx_T,
                 &id,
-                global_ctx.global_tid,
+                kmp.ctx.global_tid,
                 to_kmp_sched(opts.sched),
                 &last_iter,
                 &low,
@@ -482,7 +438,7 @@ inline fn _loop(
             const to_ret_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
             var to_ret = std.mem.bytesAsValue(in.copy_ret(f), &to_ret_bytes).*;
 
-            const red = kmp.create_reduce(@typeInfo(@TypeOf(.{to_ret})).Struct.fields, &.{opts.ret_reduction});
+            const red = reduce.create(@typeInfo(@TypeOf(.{to_ret})).Struct.fields, &.{opts.ret_reduction});
             if (opts.chunk_size > 1) {
                 while (low + opts.chunk_size < upper) : (low += stri) {
                     inline for (0..opts.chunk_size) |i| {
@@ -504,7 +460,7 @@ inline fn _loop(
                 .psource = "parallel_for" ++ @typeName(@TypeOf(f)),
                 .reserved_3 = 0x1c,
             };
-            kmp.for_static_fini(&id_fini, global_ctx.global_tid);
+            kmp.for_static_fini(&id_fini, kmp.ctx.global_tid);
 
             if (!opts.nowait) {
                 barrier();
@@ -531,14 +487,14 @@ inline fn _loop(
             var upp: idx_T = upper - 1;
             var stri: idx_T = 1;
             const incr: idx_T = increment;
-            kmp.dispatch_init(idx_T, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
+            kmp.dispatch_init(idx_T, &id, kmp.ctx.global_tid, to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
 
             const to_ret_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
             var to_ret = std.mem.bytesAsValue(in.copy_ret(f), &to_ret_bytes).*;
 
-            const red = kmp.create_reduce(@typeInfo(std.builtin.Type.Struct{in.copy_ret(f)}).Struct.fields, &.{opts.ret_reduction});
-            while (kmp.dispatch_next(idx_T, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
-                defer kmp.dispatch_fini(idx_T, &id, global_ctx.global_tid);
+            const red = kmp.create(@typeInfo(std.builtin.Type.Struct{in.copy_ret(f)}).Struct.fields, &.{opts.ret_reduction});
+            while (kmp.dispatch_next(idx_T, &id, kmp.ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
+                defer kmp.dispatch_fini(idx_T, &id, kmp.ctx.global_tid);
 
                 var i: idx_T = low;
                 while (i <= upp) : (i += incr) {
@@ -637,7 +593,7 @@ pub inline fn barrier() void {
         .psource = "barrier",
         .reserved_3 = 0x1e,
     };
-    kmp.barrier(&id, global_ctx.global_tid);
+    kmp.barrier(&id, kmp.ctx.global_tid);
 }
 
 pub inline fn flush(vars: anytype) void {
@@ -670,9 +626,9 @@ pub inline fn critical(
                 var lock: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
             };
 
-            kmp.critical(&id, global_ctx.global_tid, &static.lock, @intFromEnum(opts.sync));
+            kmp.critical(&id, kmp.ctx.global_tid, &static.lock, @intFromEnum(opts.sync));
             defer {
-                kmp.critical_end(&id, global_ctx.global_tid, &static.lock);
+                kmp.critical_end(&id, kmp.ctx.global_tid, &static.lock);
             }
 
             const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
@@ -755,10 +711,10 @@ pub inline fn single() type {
                 .reserved_3 = 0x27,
             };
 
-            if (kmp.single(&single_id, global_ctx.global_tid) == 1) {
+            if (kmp.single(&single_id, kmp.ctx.global_tid) == 1) {
                 defer {
-                    kmp.end_single(&single_id, global_ctx.global_tid);
-                    kmp.barrier(&barrier_id, global_ctx.global_tid);
+                    kmp.end_single(&single_id, kmp.ctx.global_tid);
+                    kmp.barrier(&barrier_id, kmp.ctx.global_tid);
                 }
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
 
@@ -768,7 +724,7 @@ pub inline fn single() type {
                     @call(.always_inline, f, args);
             }
 
-            kmp.barrier(&barrier_id, global_ctx.global_tid);
+            kmp.barrier(&barrier_id, kmp.ctx.global_tid);
             if (in.copy_ret(f) != void) {
                 return null;
             }
@@ -807,7 +763,7 @@ pub inline fn masked() type {
                 .psource = "masked" ++ @typeName(@TypeOf(f)),
             };
 
-            if (kmp.masked(&masked_id, global_ctx.global_tid, filter) == 1) {
+            if (kmp.masked(&masked_id, kmp.ctx.global_tid, filter) == 1) {
                 const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
                 if (type_info == .ErrorUnion) {
                     return try @call(.always_inline, f, args);
@@ -864,7 +820,7 @@ pub inline fn task(
             const real_task = t_type.alloc(
                 f,
                 &id,
-                global_ctx.global_tid,
+                kmp.ctx.global_tid,
                 flags,
             );
             real_task.set_data(&norm.shared, private_args);
@@ -877,7 +833,7 @@ pub inline fn task(
 
             if (comptime opts.iff) {
                 if (!cond) {
-                    real_task.begin_if0(&id, global_ctx.global_tid);
+                    real_task.begin_if0(&id, kmp.ctx.global_tid);
 
                     if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
                         _ = @call(.always_inline, f, norm.shared ++ private_args) catch |err| err;
@@ -885,7 +841,7 @@ pub inline fn task(
                         _ = @call(.always_inline, f, norm.shared ++ private_args);
                     }
 
-                    real_task.complete_if0(&id, global_ctx.global_tid);
+                    real_task.complete_if0(&id, kmp.ctx.global_tid);
                 }
 
                 if (@TypeOf(pro) == *promise(in.copy_ret(f))) {
@@ -894,7 +850,7 @@ pub inline fn task(
                 return pro;
             }
 
-            _ = real_task.task(&id, global_ctx.global_tid);
+            _ = real_task.task(&id, kmp.ctx.global_tid);
             return pro;
         }
 
@@ -942,7 +898,7 @@ pub inline fn taskyeild() void {
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "taskyeild",
     };
-    kmp.taskyield(&id, global_ctx.global_tid);
+    kmp.taskyield(&id, kmp.ctx.global_tid);
 }
 
 pub inline fn taskwait() void {
@@ -950,7 +906,7 @@ pub inline fn taskwait() void {
         .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
         .psource = "taskwait",
     };
-    kmp.taskwait(&id, global_ctx.global_tid);
+    kmp.taskwait(&id, kmp.ctx.global_tid);
 }
 
 // //////////////////////////////////////////////////////////////////////////////////
