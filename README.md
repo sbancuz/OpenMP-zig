@@ -30,7 +30,8 @@ fn main() void {
 - [x] `#pragma omp barrier`
 - [x] `#pragma omp task`
 - [ ] `#pragma omp atomic` NOT POSSIBLE TO IMPLEMENT
-      
+- [ ] `#pragma omp simd` NOT POSSIBLE TO IMPLEMENT
+
 To see some other examples of the library check the tests folder.
 
 ## Extensions
