@@ -11,7 +11,7 @@ fn test_omp_critical() bool {
         fn f(f_sum: *u32) void {
             var mysum: u32 = 0;
 
-            omp.loop(.{ .idx = u32 })
+            omp.loop(u32, .{})
                 .run(.{ .shared = .{&mysum} }, 1, params.loop_count, 1, struct {
                 fn f(i: u32, f_mysum: *u32) void {
                     f_mysum.* = f_mysum.* + i;
@@ -54,7 +54,7 @@ fn omp_critical_hint(iter: u32) bool {
         .run(.{ .shared = .{ &sum, iter } }, struct {
         fn f(f_sum: *u32, f_iter: u32) void {
             var mysum: u32 = 0;
-            omp.loop(.{ .idx = u32 })
+            omp.loop(u32, .{})
                 .run(.{ .shared = .{&mysum} }, 0, params.loop_count, 1, struct {
                 fn f(i: u32, f_mysum: *u32) void {
                     f_mysum.* = f_mysum.* + i;

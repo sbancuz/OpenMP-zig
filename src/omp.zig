@@ -39,7 +39,6 @@ pub const task_opts = struct {
 };
 
 pub const parallel_for_opts = struct {
-    idx: type,
     sched: schedule = .static,
     chunk_size: c_int = 1,
     ordered: bool = false,
@@ -320,28 +319,29 @@ pub inline fn parallel(
         }
 
         pub inline fn loop(
+            comptime idx_T: type,
             comptime loop_args: parallel_for_opts,
         ) type {
             return struct {
                 inline fn _run_if(
                     args: anytype,
                     cond: bool,
-                    lower: loop_args.idx,
-                    upper: loop_args.idx,
-                    increment: loop_args.idx,
+                    lower: idx_T,
+                    upper: idx_T,
+                    increment: idx_T,
                     comptime f: anytype,
                 ) in.copy_ret(f) {
-                    return common.parallel_loop_impl(loop_args.idx, lower, upper, increment, args, omp.loop(loop_args).run, f, true, cond);
+                    return common.parallel_loop_impl(idx_T, lower, upper, increment, args, omp.loop(idx_T, loop_args).run, f, true, cond);
                 }
 
                 inline fn _run(
                     args: anytype,
-                    lower: loop_args.idx,
-                    upper: loop_args.idx,
-                    increment: loop_args.idx,
+                    lower: idx_T,
+                    upper: idx_T,
+                    increment: idx_T,
                     comptime f: anytype,
                 ) in.copy_ret(f) {
-                    return common.parallel_loop_impl(loop_args.idx, lower, upper, increment, args, omp.loop(loop_args).run, f, false, false);
+                    return common.parallel_loop_impl(idx_T, lower, upper, increment, args, omp.loop(idx_T, loop_args).run, f, false, false);
                 }
 
                 pub const run = if (opts.iff) _run_if else _run;
@@ -424,12 +424,14 @@ inline fn reduce(
 }
 
 pub inline fn loop(
+    comptime idx_T: type,
     comptime opts: parallel_for_opts,
 ) type {
-    return _loop(opts, false);
+    return _loop(idx_T, opts, false);
 }
 
 inline fn _loop(
+    comptime idx_T: type,
     comptime opts: parallel_for_opts,
     comptime is_from_sections: bool,
 ) type {
@@ -446,9 +448,9 @@ inline fn _loop(
 
         inline fn static_impl(
             args: anytype,
-            lower: opts.idx,
-            upper: opts.idx,
-            increment: opts.idx,
+            lower: idx_T,
+            upper: idx_T,
+            increment: idx_T,
             comptime f: anytype,
         ) in.copy_ret(f) {
             const sections_flag = if (is_from_sections) @intFromEnum(kmp.ident_flags.IDENT_WORK_SECTIONS) else 0;
@@ -459,13 +461,13 @@ inline fn _loop(
 
             // This is `1` iside the last thread execution
             var last_iter: c_int = 0;
-            var low: opts.idx = lower;
-            var upp: opts.idx = upper - 1;
-            var stri: opts.idx = 1;
-            const incr: opts.idx = increment;
+            var low: idx_T = lower;
+            var upp: idx_T = upper - 1;
+            var stri: idx_T = 1;
+            const incr: idx_T = increment;
 
             kmp.for_static_init(
-                opts.idx,
+                idx_T,
                 &id,
                 global_ctx.global_tid,
                 to_kmp_sched(opts.sched),
@@ -484,14 +486,14 @@ inline fn _loop(
             if (opts.chunk_size > 1) {
                 while (low + opts.chunk_size < upper) : (low += stri) {
                     inline for (0..opts.chunk_size) |i| {
-                        red.single(&to_ret, @call(.always_inline, f, .{low + @as(opts.idx, i)} ++ args) catch |err| err);
+                        red.single(&to_ret, @call(.always_inline, f, .{low + @as(idx_T, i)} ++ args) catch |err| err);
                     }
                 }
                 while (low < upper) : (low += incr) {
                     red.single(&to_ret, @call(.always_inline, f, .{low} ++ args));
                 }
             } else {
-                var i: opts.idx = low;
+                var i: idx_T = low;
                 while (i <= upp) : (i += incr) {
                     red.single(&to_ret, @call(.always_inline, f, .{i} ++ args));
                 }
@@ -513,9 +515,9 @@ inline fn _loop(
 
         pub inline fn dynamic_impl(
             args: anytype,
-            lower: opts.idx,
-            upper: opts.idx,
-            increment: opts.idx,
+            lower: idx_T,
+            upper: idx_T,
+            increment: idx_T,
             comptime f: anytype,
         ) in.copy_ret(f) {
             const id = .{
@@ -525,20 +527,20 @@ inline fn _loop(
 
             // This is `1` iside the last thread execution
             var last_iter: c_int = 0;
-            var low: opts.idx = lower;
-            var upp: opts.idx = upper - 1;
-            var stri: opts.idx = 1;
-            const incr: opts.idx = increment;
-            kmp.dispatch_init(opts.idx, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
+            var low: idx_T = lower;
+            var upp: idx_T = upper - 1;
+            var stri: idx_T = 1;
+            const incr: idx_T = increment;
+            kmp.dispatch_init(idx_T, &id, global_ctx.global_tid, to_kmp_sched(opts.sched), low, upp, incr, opts.chunk_size);
 
             const to_ret_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
             var to_ret = std.mem.bytesAsValue(in.copy_ret(f), &to_ret_bytes).*;
 
             const red = kmp.create_reduce(@typeInfo(std.builtin.Type.Struct{in.copy_ret(f)}).Struct.fields, &.{opts.ret_reduction});
-            while (kmp.dispatch_next(opts.idx, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
-                defer kmp.dispatch_fini(opts.idx, &id, global_ctx.global_tid);
+            while (kmp.dispatch_next(idx_T, &id, global_ctx.global_tid, &last_iter, &low, &upp, &stri) == 1) {
+                defer kmp.dispatch_fini(idx_T, &id, global_ctx.global_tid);
 
-                var i: opts.idx = low;
+                var i: idx_T = low;
                 while (i <= upp) : (i += incr) {
                     red.single(&to_ret, @call(.always_inline, f, .{i} ++ args));
                 }
@@ -549,9 +551,9 @@ inline fn _loop(
 
         pub inline fn static(
             args: anytype,
-            lower: opts.idx,
-            upper: opts.idx,
-            increment: opts.idx,
+            lower: idx_T,
+            upper: idx_T,
+            increment: idx_T,
             comptime f: anytype,
         ) in.copy_ret(f) {
             in.check_args(@TypeOf(args));
@@ -559,7 +561,7 @@ inline fn _loop(
 
             const f_type_info = @typeInfo(@TypeOf(f));
             if (f_type_info.Fn.params.len < 1) {
-                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
+                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(idx_T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
             }
             const do_copy = comptime !is_from_sections;
             const red = if (opts.ret_reduction == .none) opts.reduction else opts.reduction ++ .{opts.ret_reduction};
@@ -587,9 +589,9 @@ inline fn _loop(
 
         pub inline fn dynamic(
             args: anytype,
-            lower: opts.idx,
-            upper: opts.idx,
-            increment: opts.idx,
+            lower: idx_T,
+            upper: idx_T,
+            increment: idx_T,
             comptime f: anytype,
         ) in.copy_ret(f) {
             std.debug.assert(is_from_sections == false);
@@ -599,7 +601,7 @@ inline fn _loop(
 
             const f_type_info = @typeInfo(@TypeOf(f));
             if (f_type_info.Fn.params.len < 1) {
-                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(opts.idx) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
+                @compileError("Expected function with signature `inline fn(numeric, ...)`" ++ @typeName(@TypeOf(f)) ++ " instead.\n" ++ @typeName(idx_T) ++ " may be different from the expected type: " ++ @typeName(f_type_info.Fn.params[0].type.?));
             }
 
             const st = struct {
@@ -725,8 +727,7 @@ pub inline fn sections(
                 }
             }.f;
 
-            return _loop(.{
-                .idx = usize,
+            return _loop(usize, .{
                 .nowait = opts.nowait,
                 .reduction = opts.reduction,
                 .sched = .static,

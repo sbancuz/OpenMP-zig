@@ -103,7 +103,7 @@ fn test_omp_loop_return() !bool {
     const res = omp.parallel(.{ .ret_reduction = .plus })
         .run(.{}, struct {
         fn f() usize {
-            const a = omp.loop(.{ .idx = u32, .ret_reduction = .plus })
+            const a = omp.loop(u32, .{ .ret_reduction = .plus })
                 .run(.{}, 0, params.loop_count, 1, struct {
                 fn f(i: u32) usize {
                     _ = i;

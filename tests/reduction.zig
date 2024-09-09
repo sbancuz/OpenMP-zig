@@ -9,7 +9,7 @@ fn parallel_reduction_plus() bool {
     omp.parallel(.{})
         .run(.{ .shared = .{&sum} }, struct {
         fn f(f_sum: *u32) void {
-            omp.loop(.{ .idx = u32, .reduction = &.{.plus} })
+            omp.loop(u32, .{ .reduction = &.{.plus} })
                 .run(.{ .reduction = .{f_sum} }, 1, params.loop_count + 1, 1, struct {
                 fn f(i: u32, ff_sum: *u32) void {
                     ff_sum.* += i;
@@ -42,7 +42,7 @@ fn parallel_loop_reduction_plus() bool {
     const known_sum: u32 = (params.loop_count * (params.loop_count + 1)) / 2;
 
     omp.parallel(.{})
-        .loop(.{ .idx = u32, .reduction = &.{.plus} })
+        .loop(u32, .{ .reduction = &.{.plus} })
         .run(.{ .reduction = .{&sum} }, 1, params.loop_count + 1, 1, struct {
         fn f(i: u32, f_sum: *u32) void {
             f_sum.* += i;
