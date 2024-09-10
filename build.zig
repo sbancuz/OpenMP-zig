@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) !void {
 
     omp.addOptions("build_options", options);
     omp.link_libc = true;
-    omp.linkSystemLibrary("omp");
+    omp.linkSystemLibrary("omp", .{ .needed = true });
 
     // b.installArtifact(lib);
     {
