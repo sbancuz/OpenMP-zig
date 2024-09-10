@@ -19,6 +19,16 @@ fn main() void {
 }
 ```
 
+## Build
+
+```zig build.zig
+    const OpenMP_zig_dep = b.dependency("OpenMP-zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("omp", OpenMP_zig_dep.module("omp"));
+```
+
 ## Features
 - [x] `#pragma omp parallel`
 - [x] `All reductions`
