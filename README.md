@@ -21,12 +21,17 @@ fn main() void {
 
 ## Build
 
-```zig build.zig
-    const OpenMP_zig_dep = b.dependency("OpenMP-zig", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("omp", OpenMP_zig_dep.module("omp"));
+```sh
+zig fetch --save git+https://github.com/sbancuz/OpenMP-zig
+```
+
+```zig
+// build.zig
+const OpenMP_zig_dep = b.dependency("OpenMP-zig", .{
+      .target = target,
+      .optimize = optimize,
+});
+exe.root_module.addImport("omp", OpenMP_zig_dep.module("omp"));
 ```
 
 ## Features
