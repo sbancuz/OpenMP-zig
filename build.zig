@@ -53,14 +53,14 @@ pub fn build(b: *std.Build) !void {
     const openmp_path = try findOpenMP(b);
     const support = try checkSupport(b, openmp_path);
 
-    const lib = b.addStaticLibrary(.{
-        .name = "omp-zig",
-        .root_source_file = b.path("src/omp.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    lib.linkLibC();
-    lib.linkSystemLibrary("omp");
+    // const lib = b.addSharedLibrary(.{
+    //     .name = "omp-zig",
+    //     .root_source_file = b.path("src/omp.zig"),
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
+    // lib.linkLibC();
+    // lib.linkSystemLibrary("omp");
 
     const options = b.addOptions();
     options.addOption(bool, "ompt_support", support.ompt);
@@ -71,27 +71,35 @@ pub fn build(b: *std.Build) !void {
 
     const opts_mod = options.createModule();
 
-    lib.root_module.addImport("build_options", opts_mod);
-
-    b.installArtifact(lib);
-
-    const unit_tests = b.addTest(.{
-        .name = "unit-tests",
-        .root_source_file = b.path("tests/main.zig"),
+    // lib.root_module.addImport("build_options", opts_mod);
+    const omp = b.addModule("omp", .{
+        .root_source_file = b.path("src/omp.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    unit_tests.linkLibC();
-    unit_tests.linkSystemLibrary("omp");
+    omp.addOptions("build_options", options);
+    omp.link_libc = true;
+    omp.linkSystemLibrary("omp");
 
-    const omp = b.addModule("omp", .{ .root_source_file = b.path("src/omp.zig") });
+    // b.installArtifact(lib);
+    {
+        const unit_tests = b.addTest(.{
+            .name = "unit-tests",
+            .root_source_file = b.path("tests/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
 
-    omp.addImport("build_options", opts_mod);
-    unit_tests.root_module.addImport("omp", omp);
-    b.installArtifact(unit_tests);
+        unit_tests.linkLibC();
+        unit_tests.linkSystemLibrary("omp");
 
-    const run_unit_tests = b.addRunArtifact(unit_tests);
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
+        omp.addImport("build_options", opts_mod);
+        unit_tests.root_module.addImport("omp", omp);
+        b.installArtifact(unit_tests);
+
+        const run_unit_tests = b.addRunArtifact(unit_tests);
+        const test_step = b.step("test", "Run unit tests");
+        test_step.dependOn(&run_unit_tests.step);
+    }
 }
