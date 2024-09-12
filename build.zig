@@ -1,30 +1,15 @@
 const std = @import("std");
 
-const env_to_check = &[_][]const u8{
-    "LD_LIBRARY_PATH",
-    "LIBRARY_PATH",
-    "CMAKE_LIBRARY_PATH",
-    "PATH",
-};
+fn findOpenMP(b: *std.Build, omp: *std.Build.Module) ![]const u8 {
+    const t = omp.resolved_target.?.result;
+    const paths = try std.zig.system.NativePaths.detect(b.allocator, t);
+    var buf: [20]u8 = undefined;
+    var lib_name = try std.fmt.bufPrint(&buf, "{s}omp{s}", .{ t.libPrefix(), t.dynamicLibSuffix() });
 
-// TODO: Find a better way to do this, idk how the compiler does it, but it would be nice to use the same mechanism
-fn findOpenMP(b: *std.Build) ![]const u8 {
-    for (env_to_check) |env| {
-        if (std.process.getEnvVarOwned(b.allocator, env)) |val| {
-            if (!std.mem.containsAtLeast(u8, val, 1, "openmp")) {
-                continue;
-            }
-
-            var it = std.mem.splitAny(u8, val, ":");
-            while (it.next()) |p| {
-                if (std.mem.containsAtLeast(u8, p, 1, "openmp")) {
-                    return try b.findProgram(&[_][]const u8{"libomp.so"}, &[_][]const u8{p});
-                }
-            }
-        } else |_| {}
-    }
-
-    return error.NotFound;
+    return b.findProgram(&[_][]const u8{lib_name}, paths.lib_dirs.items) catch {
+        lib_name = try std.fmt.bufPrint(&buf, "{s}omp{s}", .{ t.libPrefix(), t.staticLibSuffix() });
+        return try b.findProgram(&[_][]const u8{lib_name}, paths.lib_dirs.items);
+    };
 }
 
 const omp_support = struct {
@@ -50,27 +35,6 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const openmp_path = try findOpenMP(b);
-    const support = try checkSupport(b, openmp_path);
-
-    // const lib = b.addSharedLibrary(.{
-    //     .name = "omp-zig",
-    //     .root_source_file = b.path("src/omp.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-    // lib.linkLibC();
-    // lib.linkSystemLibrary("omp");
-
-    const options = b.addOptions();
-    options.addOption(bool, "ompt_support", support.ompt);
-    options.addOption(bool, "ompd_support", support.ompd);
-    options.addOption(bool, "gomp_support", support.gomp);
-    options.addOption(bool, "ompx_support", support.ompx);
-    options.addOption(bool, "kmp_monitor_support", support.kmp_monitor);
-
-    const opts_mod = options.createModule();
-
     // lib.root_module.addImport("build_options", opts_mod);
     const omp = b.addModule("omp", .{
         .root_source_file = b.path("src/omp.zig"),
@@ -78,11 +42,23 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    omp.addOptions("build_options", options);
     omp.link_libc = true;
     omp.linkSystemLibrary("omp", .{ .needed = true });
 
-    // b.installArtifact(lib);
+    const openmp_path = try findOpenMP(b, omp);
+    const support = try checkSupport(b, openmp_path);
+
+    const options = b.addOptions();
+    const opts_mod = options.createModule();
+
+    options.addOption(bool, "ompt_support", support.ompt);
+    options.addOption(bool, "ompd_support", support.ompd);
+    options.addOption(bool, "gomp_support", support.gomp);
+    options.addOption(bool, "ompx_support", support.ompx);
+    options.addOption(bool, "kmp_monitor_support", support.kmp_monitor);
+
+    omp.addOptions("build_options", options);
+
     {
         const unit_tests = b.addTest(.{
             .name = "unit-tests",
