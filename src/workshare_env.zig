@@ -2,7 +2,7 @@ const reduce = @import("reduce.zig");
 const kmp = @import("kmp.zig");
 const in = @import("input_handler.zig");
 
-inline fn make(
+pub inline fn make(
     comptime red: []const reduce.operators,
     comptime do_copy: bool,
     comptime f: anytype,
@@ -14,7 +14,7 @@ inline fn make(
             var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
         };
 
-        inline fn run(
+        pub inline fn run(
             comptime is_omp_func: bool,
             pre: anytype,
             args: anytype,
