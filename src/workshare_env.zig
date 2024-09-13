@@ -2,12 +2,17 @@ const reduce = @import("reduce.zig");
 const kmp = @import("kmp.zig");
 const in = @import("input_handler.zig");
 
+pub const options = struct {
+    return_optional: bool,
+    do_copy: bool,
+    is_omp_func: bool = false,
+};
+
 pub inline fn make(
     comptime red: []const reduce.operators,
-    comptime do_copy: bool,
     comptime f: anytype,
     comptime ret_t: type,
-    comptime optional: bool,
+    comptime opts: options,
 ) type {
     return struct {
         const static = struct {
@@ -15,22 +20,21 @@ pub inline fn make(
         };
 
         pub inline fn run(
-            comptime is_omp_func: bool,
             pre: anytype,
             args: anytype,
             post: anytype,
             ret_reduction: *ret_t,
-        ) if (optional) ?ret_t else ret_t {
-            const private_copy = if (do_copy) in.make_another(args.private) else args.private;
-            const firstprivate_copy = if (do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
-            const reduction_copy = if (do_copy) in.shallow_copy(args.reduction) else args.reduction;
+        ) if (opts.return_optional) ?ret_t else ret_t {
+            const private_copy = if (opts.do_copy) in.make_another(args.private) else args.private;
+            const firstprivate_copy = if (opts.do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
+            const reduction_copy = if (opts.do_copy) in.shallow_copy(args.reduction) else args.reduction;
             const true_args = pre ++ brk: {
-                const r = if (do_copy)
+                const r = if (opts.do_copy)
                     args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy
                 else
                     .{args};
 
-                break :brk if (is_omp_func) r else .{r};
+                break :brk if (opts.is_omp_func) r else .{r};
             } ++ post;
 
             var ret = if (@typeInfo(ret_t) == .ErrorUnion)
@@ -64,7 +68,7 @@ pub inline fn make(
             }
 
             if (ret_t != void) {
-                if (optional) {
+                if (opts.return_optional) {
                     return null;
                 }
                 return ret;

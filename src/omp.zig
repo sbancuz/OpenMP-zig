@@ -55,7 +55,11 @@ pub inline fn parallel(
         ) type {
             return opaque {
                 const red = if (in_opts.ret_reduction == .none) in_opts.reduction else in_opts.reduction ++ .{in_opts.ret_reduction};
-                const work = workshare_env.make(red, true, f, in.copy_ret(f), true);
+                const work = workshare_env.make(red, f, in.copy_ret(f), .{
+                    .do_copy = true,
+                    .return_optional = true,
+                    .is_omp_func = true,
+                });
 
                 fn workshare_outline(
                     gtid: *c_int,
@@ -70,9 +74,9 @@ pub inline fn parallel(
                     const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
                     var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
                     const maybe_ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
-                        work.run(true, .{}, args.v, .{}, &reduction_val) catch |err| err
+                        work.run(.{}, args.v, .{}, &reduction_val) catch |err| err
                     else
-                        work.run(true, .{}, args.v, .{}, &reduction_val);
+                        work.run(.{}, args.v, .{}, &reduction_val);
 
                     if (maybe_ret) |r| {
                         args.ret = r;
@@ -430,15 +434,13 @@ inline fn _loop(
                 var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
             };
 
-            const work = workshare_env.make(
-                red,
-                do_copy,
-                static_impl,
-                in.copy_ret(f),
-                false,
-            );
+            const work = workshare_env.make(red, static_impl, in.copy_ret(f), .{
+                .do_copy = do_copy,
+                .is_omp_func = false,
+                .return_optional = false,
+            });
 
-            _ = work.run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
             if (!opts.nowait) {
                 barrier();
             }
@@ -468,15 +470,13 @@ inline fn _loop(
                 var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
             };
             const red = if (opts.ret_reduction == .none) opts.reduction else opts.reduction ++ .{opts.ret_reduction};
-            const work = workshare_env.make(
-                red,
-                true,
-                dynamic_impl,
-                in.copy_ret(f),
-                false,
-            );
+            const work = workshare_env.make(red, dynamic_impl, in.copy_ret(f), .{
+                .do_copy = true,
+                .is_omp_func = false,
+                .return_optional = false,
+            });
 
-            _ = work.run(false, .{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
             if (!opts.nowait) {
                 barrier();
             }
