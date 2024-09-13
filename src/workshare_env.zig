@@ -24,23 +24,14 @@ pub inline fn make(
             const private_copy = if (do_copy) in.make_another(args.private) else args.private;
             const firstprivate_copy = if (do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
             const reduction_copy = if (do_copy) in.shallow_copy(args.reduction) else args.reduction;
-            const true_args = brk: {
-                if (do_copy) {
-                    const r = if (!is_omp_func)
-                        pre ++ .{args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy} ++ post
-                    else
-                        pre ++ args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy ++ post;
+            const true_args = pre ++ brk: {
+                const r = if (do_copy)
+                    args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy
+                else
+                    .{args};
 
-                    break :brk r;
-                } else {
-                    const r = if (!is_omp_func)
-                        pre ++ .{.{args}} ++ post
-                    else
-                        pre ++ .{args} ++ post;
-
-                    break :brk r;
-                }
-            };
+                break :brk if (is_omp_func) r else .{r};
+            } ++ post;
 
             var ret = if (@typeInfo(ret_t) == .ErrorUnion)
                 @call(.always_inline, f, true_args) catch |err| err
@@ -51,6 +42,7 @@ pub inline fn make(
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "parallel" ++ @typeName(@TypeOf(f)),
             };
+
             if (red.len > 0 or ret_t != void) {
                 if (ret_t != void) {
                     // TODO: Figure out why do I need to do this... I feel like something in the comptime eval is broken
