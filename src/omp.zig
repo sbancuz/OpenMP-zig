@@ -7,6 +7,7 @@ const c = @cImport({
 const options = @import("build_options");
 const in = @import("input_handler.zig");
 const reduce = @import("reduce.zig");
+const workshare_env = @import("workshare_env.zig");
 
 const omp = @This();
 pub const proc_bind = enum(c_int) {
@@ -59,85 +60,6 @@ pub const critical_options = struct {
     name: []const u8 = "",
 };
 
-inline fn in_workshare(
-    comptime red: []const reduction_operators,
-    comptime do_copy: bool,
-    comptime f: anytype,
-    comptime ret_t: type,
-    comptime optional: bool,
-) type {
-    return struct {
-        const static = struct {
-            var lck: kmp.critical_name_t = @bitCast([_]u8{0} ** 32);
-        };
-
-        inline fn run(
-            comptime is_omp_func: bool,
-            pre: anytype,
-            args: anytype,
-            post: anytype,
-            ret_reduction: *ret_t,
-        ) if (optional) ?ret_t else ret_t {
-            const private_copy = if (do_copy) in.make_another(args.private) else args.private;
-            const firstprivate_copy = if (do_copy) in.shallow_copy(args.firstprivate) else args.firstprivate;
-            const reduction_copy = if (do_copy) in.shallow_copy(args.reduction) else args.reduction;
-            const true_args = brk: {
-                if (do_copy) {
-                    const r = if (!is_omp_func)
-                        pre ++ .{args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy} ++ post
-                    else
-                        pre ++ args.shared ++ private_copy ++ firstprivate_copy ++ reduction_copy ++ post;
-
-                    break :brk r;
-                } else {
-                    const r = if (!is_omp_func)
-                        pre ++ .{.{args}} ++ post
-                    else
-                        pre ++ .{args} ++ post;
-
-                    break :brk r;
-                }
-            };
-
-            var ret = if (@typeInfo(ret_t) == .ErrorUnion)
-                @call(.always_inline, f, true_args) catch |err| err
-            else
-                @call(.always_inline, f, true_args);
-
-            const id: kmp.ident_t = .{
-                .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
-                .psource = "parallel" ++ @typeName(@TypeOf(f)),
-            };
-            if (red.len > 0 or ret_t != void) {
-                if (ret_t != void) {
-                    // TODO: Figure out why do I need to do this... I feel like something in the comptime eval is broken
-                    var sus = ret_reduction.*;
-                    const reduce_args = if (ret_t == void) reduction_copy else reduction_copy ++ .{&ret};
-                    const reduce_dest = if (ret_t == void) args.reduction else args.reduction ++ .{&sus};
-                    const has_result = reduce.reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);
-
-                    if (has_result > 0) {
-                        ret_reduction.* = sus;
-                        return ret_reduction.*;
-                    }
-                } else {
-                    const has_result = reduce.reduce(&id, true, args.reduction, reduction_copy, red, &static.lck);
-                    if (has_result > 0) {
-                        return ret_reduction.*;
-                    }
-                }
-            }
-
-            if (ret_t != void) {
-                if (optional) {
-                    return null;
-                }
-                return ret;
-            }
-        }
-    };
-}
-
 pub inline fn parallel(
     comptime opts: parallel_opts,
 ) type {
@@ -167,7 +89,7 @@ pub inline fn parallel(
         ) type {
             return opaque {
                 const red = if (in_opts.ret_reduction == .none) in_opts.reduction else in_opts.reduction ++ .{in_opts.ret_reduction};
-                const work = in_workshare(red, true, f, in.copy_ret(f), true);
+                const work = workshare_env.make(red, true, f, in.copy_ret(f), true);
 
                 fn workshare_outline(
                     gtid: *c_int,
@@ -527,7 +449,7 @@ inline fn _loop(
                 var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
             };
 
-            const work = in_workshare(
+            const work = workshare_env.make(
                 red,
                 do_copy,
                 static_impl,
@@ -565,7 +487,7 @@ inline fn _loop(
                 var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
             };
             const red = if (opts.ret_reduction == .none) opts.reduction else opts.reduction ++ .{opts.ret_reduction};
-            const work = in_workshare(
+            const work = workshare_env.make(
                 red,
                 true,
                 dynamic_impl,
