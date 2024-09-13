@@ -10,6 +10,9 @@ const reduce = @import("reduce.zig");
 const workshare_env = @import("workshare_env.zig");
 
 const omp = @This();
+
+pub const reduction_operators = reduce.operators;
+
 pub const proc_bind = enum(c_int) {
     default = 1,
     master = 2,
@@ -17,49 +20,12 @@ pub const proc_bind = enum(c_int) {
     spread = 4,
     primary = 5,
 };
-
-pub const schedule = enum(c_long) {
-    static = 1,
-    dynamic = 2,
-    guided = 3,
-    auto = 4,
-    monotonic = 0x80000000,
-};
-
-pub const reduction_operators = reduce.operators;
 pub const parallel_opts = struct {
     iff: bool = false,
     proc_bind: proc_bind = .default,
     reduction: []const reduction_operators = &[0]reduction_operators{},
     ret_reduction: reduction_operators = .none,
 };
-
-pub const task_opts = struct {
-    iff: bool = false,
-    final: bool = false,
-    untied: bool = false,
-};
-
-pub const parallel_for_opts = struct {
-    sched: schedule = .static,
-    chunk_size: c_int = 1,
-    ordered: bool = false,
-    reduction: []const reduction_operators = &[0]reduction_operators{},
-    ret_reduction: reduction_operators = .none,
-    nowait: bool = false,
-};
-
-pub const sections_opts = struct {
-    reduction: []const reduction_operators = &[0]reduction_operators{},
-    ret_reduction: reduction_operators = .none,
-    nowait: bool = false,
-};
-
-pub const critical_options = struct {
-    sync: sync_hint_t = .none,
-    name: []const u8 = "",
-};
-
 pub inline fn parallel(
     comptime opts: parallel_opts,
 ) type {
@@ -301,6 +267,21 @@ pub inline fn parallel(
     };
 }
 
+pub const schedule = enum(c_long) {
+    static = 1,
+    dynamic = 2,
+    guided = 3,
+    auto = 4,
+    monotonic = 0x80000000,
+};
+pub const parallel_for_opts = struct {
+    sched: schedule = .static,
+    chunk_size: c_int = 1,
+    ordered: bool = false,
+    reduction: []const reduction_operators = &[0]reduction_operators{},
+    ret_reduction: reduction_operators = .none,
+    nowait: bool = false,
+};
 pub inline fn loop(
     comptime idx_T: type,
     comptime opts: parallel_for_opts,
@@ -528,6 +509,10 @@ pub inline fn flush(vars: anytype) void {
     kmp.flush(&id);
 }
 
+pub const critical_options = struct {
+    sync: sync_hint_t = .none,
+    name: []const u8 = "",
+};
 pub inline fn critical(
     comptime opts: critical_options,
 ) type {
@@ -566,6 +551,12 @@ pub inline fn critical(
         }
     };
 }
+
+pub const sections_opts = struct {
+    reduction: []const reduction_operators = &[0]reduction_operators{},
+    ret_reduction: reduction_operators = .none,
+    nowait: bool = false,
+};
 
 pub inline fn sections(
     comptime opts: sections_opts,
@@ -704,6 +695,12 @@ pub const promise = kmp.promise;
 inline fn void_or_promise_ptr(comptime T: type) type {
     return if (T == void) void else *promise(T);
 }
+
+pub const task_opts = struct {
+    iff: bool = false,
+    final: bool = false,
+    untied: bool = false,
+};
 
 pub inline fn task(
     comptime opts: task_opts,
