@@ -460,8 +460,6 @@ pub inline fn task_t(comptime shareds: type, comptime pri: type, comptime ret: t
         result: if (ret == void) void else *promise(ret),
 
         inline fn outline(comptime f: anytype) type {
-            const type_info = @typeInfo(@typeInfo(@TypeOf(f)).Fn.return_type.?);
-
             return opaque {
                 pub fn task(gtid: c_int, t: *self_t) callconv(.C) c_int {
                     _ = gtid;
@@ -469,10 +467,7 @@ pub inline fn task_t(comptime shareds: type, comptime pri: type, comptime ret: t
                     const _shareds = t.shareds.*;
                     const _privates: pri = std.mem.bytesAsValue(pri, &t.privates).*;
 
-                    const r = if (type_info == .ErrorUnion)
-                        try @call(.always_inline, f, _shareds ++ _privates)
-                    else
-                        @call(.always_inline, f, _shareds ++ _privates);
+                    const r = @call(.always_inline, f, _shareds ++ _privates);
 
                     if (ret != void) {
                         var pro = t.result;
