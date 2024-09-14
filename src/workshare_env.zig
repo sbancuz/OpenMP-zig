@@ -8,6 +8,17 @@ pub const options = struct {
     is_omp_func: bool = false,
 };
 
+inline fn no_error(comptime T: type) type {
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .ErrorUnion) {
+            return T;
+        }
+
+        return info.ErrorUnion.payload;
+    }
+}
+
 pub inline fn make(
     comptime red: []const reduce.operators,
     comptime f: anytype,
@@ -37,26 +48,29 @@ pub inline fn make(
                 break :brk if (opts.is_omp_func) r else .{r};
             } ++ post;
 
-            var ret = if (@typeInfo(ret_t) == .ErrorUnion)
-                @call(.always_inline, f, true_args) catch |err| err
-            else
-                @call(.always_inline, f, true_args);
+            const ret = @call(.always_inline, f, true_args);
 
             const id: kmp.ident_t = .{
                 .flags = @intFromEnum(kmp.ident_flags.IDENT_KMPC),
                 .psource = "parallel" ++ @typeName(@TypeOf(f)),
             };
 
-            if (red.len > 0 or ret_t != void) {
-                if (ret_t != void) {
-                    // TODO: Figure out why do I need to do this... I feel like something in the comptime eval is broken
-                    var sus = ret_reduction.*;
-                    const reduce_args = if (ret_t == void) reduction_copy else reduction_copy ++ .{&ret};
-                    const reduce_dest = if (ret_t == void) args.reduction else args.reduction ++ .{&sus};
+            const no_err_ret_t = no_error(ret_t);
+
+            if (red.len > 0 or no_err_ret_t != void) {
+                if (no_err_ret_t != void) {
+                    var ret_no_err = ret catch {
+                        ret_reduction.* = ret;
+                        _ = reduce.reduce(&id, true, args.reduction, reduction_copy, red[0 .. red.len - 1], &static.lck);
+                        return ret_reduction.*;
+                    };
+                    var tmp: no_err_ret_t = ret_reduction.* catch unreachable;
+                    const reduce_args = if (no_err_ret_t == void) reduction_copy else reduction_copy ++ .{&ret_no_err};
+                    const reduce_dest = if (no_err_ret_t == void) args.reduction else args.reduction ++ .{&tmp};
                     const has_result = reduce.reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);
 
                     if (has_result > 0) {
-                        ret_reduction.* = sus;
+                        ret_reduction.* = tmp;
                         return ret_reduction.*;
                     }
                 } else {

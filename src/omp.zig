@@ -73,10 +73,7 @@ pub inline fn parallel(
 
                     const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
                     var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
-                    const maybe_ret = if (@typeInfo(in.copy_ret(f)) == .ErrorUnion)
-                        work.run(.{}, args.v, .{}, &reduction_val) catch |err| err
-                    else
-                        work.run(.{}, args.v, .{}, &reduction_val);
+                    const maybe_ret = work.run(.{}, args.v, .{}, &reduction_val);
 
                     if (maybe_ret) |r| {
                         args.ret = r;
