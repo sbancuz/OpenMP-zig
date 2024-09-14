@@ -1,6 +1,7 @@
 const std = @import("std");
 
-pub const return_ = @import("return.zig");
+pub const errors = @import("errors.zig");
+pub const @"return" = @import("return.zig");
 pub const barrier = @import("barrier.zig");
 pub const flush = @import("flush.zig");
 pub const masked = @import("masked.zig");

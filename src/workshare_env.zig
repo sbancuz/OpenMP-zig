@@ -1,3 +1,4 @@
+const std = @import("std");
 const reduce = @import("reduce.zig");
 const kmp = @import("kmp.zig");
 const in = @import("input_handler.zig");
@@ -59,12 +60,26 @@ pub inline fn make(
 
             if (red.len > 0 or no_err_ret_t != void) {
                 if (no_err_ret_t != void) {
-                    var ret_no_err = ret catch {
-                        ret_reduction.* = ret;
-                        _ = reduce.reduce(&id, true, args.reduction, reduction_copy, red[0 .. red.len - 1], &static.lck);
+                    // If it's an error_union AND we caught an error just reduce the other parameters that need to be reduced.
+                    // This has to happen since once a reduce starts, every thread needs to call the proper kmp function calls
+                    // to signal to OMP that the reduce actually happened.
+                    //
+                    // Also apparently there needs to be the same memory structure for all the reduce args, so we just pass in
+                    // fake data that won't do anything
+                    var ret_no_err = if (@typeInfo(ret_t) == .ErrorUnion) ret catch |err| {
+                        var tmp: no_err_ret_t = undefined;
+                        var tmp2: no_err_ret_t = undefined;
+
+                        const reduce_args = if (no_err_ret_t == void) reduction_copy else reduction_copy ++ .{&tmp2};
+                        const reduce_dest = if (no_err_ret_t == void) args.reduction else args.reduction ++ .{&tmp};
+                        _ = reduce.reduce(&id, true, reduce_dest, reduce_args, red[0 .. red.len - 1] ++ .{.id}, &static.lck);
+
+                        ret_reduction.* = err;
                         return ret_reduction.*;
-                    };
-                    var tmp: no_err_ret_t = ret_reduction.* catch unreachable;
+                    } else ret;
+
+                    // If an error didn't occur then we can just append the return_reduce parameter to the end and proceed normally
+                    var tmp: no_err_ret_t = if (@typeInfo(ret_t) != .ErrorUnion) ret_reduction.* else ret_reduction.* catch unreachable;
                     const reduce_args = if (no_err_ret_t == void) reduction_copy else reduction_copy ++ .{&ret_no_err};
                     const reduce_dest = if (no_err_ret_t == void) args.reduction else args.reduction ++ .{&tmp};
                     const has_result = reduce.reduce(&id, true, reduce_dest, reduce_args, red, &static.lck);

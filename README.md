@@ -62,6 +62,9 @@ All of the directives can return values. To return something you may need to spe
 
 All of the directive can return error type, though it's not fully implemented yet for all directives.
 
+> [!WARNING]
+> Returning more than one type of error from a directive it's clearly a race condition!
+
 ## Goal
 
 The goal of this library is to provide at least OpenMP 4.5 to zig and be production ready, along with the mentioned extensions.
