@@ -113,35 +113,37 @@ test "task_error" {
     try std.testing.expect(num_failed == 0);
 }
 
-// fn test_omp_loop_error() !bool {
-//     const res = omp.parallel(.{ .ret_reduction = .plus })
-//         .run(.{}, struct {
-//         fn f() usize {
-//             const a = omp.loop(u32, .{ .ret_reduction = .plus })
-//                 .run(.{}, 0, params.loop_count, 1, struct {
-//                 fn f(i: u32) usize {
-//                     _ = i;
-//                     return 1;
-//                 }
-//             }.f);
-//             return a;
-//         }
-//     }.f);
+fn test_omp_loop_error() !bool {
+    _ = omp.parallel(.{ .ret_reduction = .plus })
+        .run(.{}, struct {
+        fn f() !usize {
+            const a = omp.loop(u32, .{ .ret_reduction = .plus })
+                .run(.{}, 0, params.loop_count, 1, struct {
+                fn f(i: u32) error{WompWomp}!usize {
+                    _ = i;
+                    return error.WompWomp;
+                }
+            }.f);
+            return a;
+        }
+    }.f) catch |err| switch (err) {
+        error.WompWomp => return true,
+    };
 
-//     return params.loop_count * omp.get_max_threads() == res;
-// }
+    return false;
+}
 
-// test "loop_error" {
-//     if (omp.get_max_threads() < 2) {
-//         omp.set_num_threads(8);
-//     }
+test "loop_error" {
+    if (omp.get_max_threads() < 2) {
+        omp.set_num_threads(8);
+    }
 
-//     var num_failed: u32 = 0;
-//     for (0..1) |_| {
-//         if (!try test_omp_loop_error()) {
-//             num_failed += 1;
-//         }
-//     }
+    var num_failed: u32 = 0;
+    for (0..1) |_| {
+        if (!try test_omp_loop_error()) {
+            num_failed += 1;
+        }
+    }
 
-//     try std.testing.expect(num_failed == 0);
-// }
+    try std.testing.expect(num_failed == 0);
+}

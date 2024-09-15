@@ -14,6 +14,17 @@ fn get_field_idx(comptime T: type, comptime field_name: []const u8) u32 {
     };
 }
 
+pub inline fn no_error(comptime T: type) type {
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .ErrorUnion) {
+            return T;
+        }
+
+        return info.ErrorUnion.payload;
+    }
+}
+
 pub fn zigc_ret(comptime f: anytype, comptime args_type: type) type {
     const f_type_info = @typeInfo(@TypeOf(f));
     if (f_type_info != .Fn) {

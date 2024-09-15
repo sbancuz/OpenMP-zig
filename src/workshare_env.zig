@@ -9,17 +9,6 @@ pub const options = struct {
     is_omp_func: bool = false,
 };
 
-inline fn no_error(comptime T: type) type {
-    comptime {
-        const info = @typeInfo(T);
-        if (info != .ErrorUnion) {
-            return T;
-        }
-
-        return info.ErrorUnion.payload;
-    }
-}
-
 pub inline fn make(
     comptime red: []const reduce.operators,
     comptime f: anytype,
@@ -56,7 +45,7 @@ pub inline fn make(
                 .psource = "parallel" ++ @typeName(@TypeOf(f)),
             };
 
-            const no_err_ret_t = no_error(ret_t);
+            const no_err_ret_t = in.no_error(ret_t);
 
             if (red.len > 0 or no_err_ret_t != void) {
                 if (no_err_ret_t != void) {

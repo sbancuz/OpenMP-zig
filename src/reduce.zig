@@ -123,39 +123,60 @@ pub inline fn create(
             lhs: anytype,
             rhs: @TypeOf(lhs.*),
         ) void {
+            var l, const r = ret: {
+                if (@typeInfo(@TypeOf(lhs.*)) == .ErrorUnion) {
+                    // Here we have to unwrap the error union to find out if there is an error, if there is just put it in
+                    // the left part since that is the one that will aggregate the data. This will propagate to all the
+                    // other computations since it will keep checking the left side.
+                    //
+                    // TODO: Find a more efficient way to do this, right now I don't think we can short the computation
+                    // and return the error directly, but if we can it would be better
+                    const t = lhs.* catch return;
+                    const t1 = rhs catch {
+                        lhs.* = rhs;
+                        return;
+                    };
+
+                    break :ret .{ &t, t1 };
+                } else {
+                    break :ret .{ lhs, rhs };
+                }
+            };
+
+            // @compileLog(l);
             inline for (reduce_operators) |op| {
                 switch (op) {
                     .plus => {
-                        lhs.* += rhs;
+                        l.* += r;
                     },
                     .mult => {
-                        lhs.* *= rhs;
+                        l.* *= r;
                     },
                     .minus => {
-                        lhs.* -= rhs;
+                        l.* -= r;
                     },
                     .bitwise_and => {
-                        lhs.* &= rhs;
+                        l.* &= r;
                     },
                     .bitwise_or => {
-                        lhs.* |= rhs;
+                        l.* |= r;
                     },
                     .bitwise_xor => {
-                        lhs.* ^= rhs;
+                        l.* ^= r;
                     },
                     .logical_and => {
-                        lhs.* = lhs.* and rhs;
+                        l.* = l.* and r;
                     },
                     .logical_or => {
-                        lhs.* = lhs.* or rhs;
+                        l.* = l.* or r;
                     },
                     .max => {
-                        lhs.* = @max(lhs.*, rhs);
+                        l.* = @max(l.*, r);
                     },
                     .min => {
-                        lhs.* = @min(lhs.*, rhs);
+                        l.* = @min(l.*, r);
                     },
-                    .custom => lhs.reduce(rhs.*),
+                    .custom => l.reduce(r.*),
                     .id => {},
                     .none => {},
                 }

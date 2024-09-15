@@ -346,7 +346,7 @@ inline fn _loop(
             if (opts.chunk_size > 1) {
                 while (low + opts.chunk_size < upper) : (low += stri) {
                     inline for (0..opts.chunk_size) |i| {
-                        red.single(&to_ret, @call(.always_inline, f, .{low + @as(idx_T, i)} ++ args) catch |err| err);
+                        red.single(&to_ret, @call(.always_inline, f, .{low + @as(idx_T, i)} ++ args));
                     }
                 }
                 while (low < upper) : (low += incr) {
@@ -428,7 +428,7 @@ inline fn _loop(
 
             const st = struct {
                 const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
-                var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
+                var reduction_val: in.copy_ret(f) = std.mem.bytesAsValue(in.no_error(in.copy_ret(f)), &reduction_val_bytes).*;
             };
 
             const work = workshare_env.make(red, static_impl, in.copy_ret(f), .{
@@ -437,7 +437,12 @@ inline fn _loop(
                 .return_optional = false,
             });
 
-            _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            // Ignore any of the returns since the only ones we care about are the reduction values
+            if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val) catch {};
+            } else {
+                _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            }
             if (!opts.nowait) {
                 barrier();
             }
@@ -464,7 +469,7 @@ inline fn _loop(
 
             const st = struct {
                 const reduction_val_bytes = [_]u8{0} ** @sizeOf(in.copy_ret(f));
-                var reduction_val = std.mem.bytesAsValue(in.copy_ret(f), &reduction_val_bytes).*;
+                var reduction_val: in.copy_ret(f) = std.mem.bytesAsValue(in.no_error(in.copy_ret(f)), &reduction_val_bytes).*;
             };
             const red = if (opts.ret_reduction == .none) opts.reduction else opts.reduction ++ .{opts.ret_reduction};
             const work = workshare_env.make(red, dynamic_impl, in.copy_ret(f), .{
@@ -473,7 +478,11 @@ inline fn _loop(
                 .return_optional = false,
             });
 
-            _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            if (@typeInfo(in.copy_ret(f)) == .ErrorUnion) {
+                _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val) catch {};
+            } else {
+                _ = work.run(.{}, in.normalize_args(args), .{ lower, upper, increment, f }, &st.reduction_val);
+            }
             if (!opts.nowait) {
                 barrier();
             }

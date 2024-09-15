@@ -60,7 +60,42 @@ All of the directives can return values. To return something you may need to spe
 
 ### Errors
 
-All of the directive can return error type, though it's not fully implemented yet for all directives.
+All of the directive can return error types.
+
+```zig
+fn test_omp_task_error() !bool {
+    // The ret reduction parameter tells the directive how it should reduce the return value
+    const result = omp.parallel(.{ .ret_reduction = .plus })
+        .run(.{}, struct {
+        // You can return whatever you want!
+        fn f() !usize {
+            const maybe = omp.single()
+                .run(.{}, struct {
+                // Only for tasks, you have to put the explicit error type in the promise, otherwise it won't be
+                // able to infer the type
+                fn f() *omp.promise(error{WompWomp}!usize) {
+                    return omp.task(.{})
+                        .run(.{}, struct {
+                        // Same deal here
+                        fn f() error{WompWomp}!usize {
+                            return error.WompWomp;
+                        }
+                    }.f);
+                }
+            }.f);
+            if (maybe) |pro| {
+                defer pro.deinit();
+                return pro.get();
+            }
+            return 0;
+        }
+    }.f) catch |err| switch (err) {
+        error.WompWomp => std.debug.print("Caught an error :^(", .{});
+    };
+
+    std.debug.print("No errors here!". /{});
+}
+```
 
 > [!WARNING]
 > Returning more than one type of error from a directive it's clearly a race condition!
