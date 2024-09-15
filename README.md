@@ -71,8 +71,8 @@ fn test_omp_task_error() !bool {
         fn f() !usize {
             const maybe = omp.single()
                 .run(.{}, struct {
-                // Only for tasks, you have to put the explicit error type in the promise, otherwise it won't be
-                // able to infer the type
+                // Only for tasks, you have to put the explicit error type in the promise,
+                // otherwise it won't be able to infer the type
                 fn f() *omp.promise(error{WompWomp}!usize) {
                     return omp.task(.{})
                         .run(.{}, struct {
