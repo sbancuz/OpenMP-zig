@@ -51,17 +51,6 @@ To see some other examples of the library check the tests folder.
 
 ## Extensions
 
-### Return
-
-All of the directives can return values. To return something you may need to specify the `ret_reduction` parameter.
-
-> [!WARNING]
-> The promises that are returned from the `task` directive will be heap allocated. So make sure to deinit() them!
-
-### Errors
-
-All of the directive can return error types.
-
 ```zig
 fn test_omp_task_error() !bool {
     // The ret reduction parameter tells the directive how it should reduce the return value
@@ -97,6 +86,16 @@ fn test_omp_task_error() !bool {
 }
 ```
 
+### Return
+
+All of the directives can return values. To return something you may need to specify the `ret_reduction` parameter.
+
+> [!WARNING]
+> The promises that are returned from the `task` directive will be heap allocated. So make sure to deinit() them!
+
+### Errors
+
+All of the directive can return error types.
 > [!WARNING]
 > Returning more than one type of error from a directive it's clearly a race condition!
 
